@@ -1,29 +1,33 @@
 import os
+import logging
 import stat
 import posixpath  # Wichtig für die Pfad-Manipulation auf Servern
 import paramiko
 from wsgidav.dav_provider import DAVProvider, DAVNonCollection, DAVCollection
-from wsgidav.wsgidav_app import WsgiDavApp
+from wsgidav.wsgidav_app import WsgiDAVApp
 from wsgidav import util
-from wsgidav.lib.dav_error import DAVNotFoundError, DAVForbidden, DAVError
+#from wsgidav.dav_error import DAVNotFoundError, DAVForbidden, DAVError
 
 # --- Konfiguration ---
 # TODO: Ersetze dies durch deine echten Server-Daten
-SSH_HOST = "dein-server.com"
+SSH_HOST = "server"
 SSH_PORT = 22
-SSH_USER = "dein-username"
-SSH_PASS = "dein-passwort"  # ODER SSH_KEY_FILE = "/pfad/zum/key.pem"
-REMOTE_ROOT_PATH = "/home/dein-username/webdav_files"  # Der Ordner auf dem Server, der als WebDAV-Root dienen soll
+SSH_USER = "user"
+SSH_PASS = "pass"  # ODER SSH_KEY_FILE = "/pfad/zum/key.pem"
+REMOTE_ROOT_PATH = "/tmp"  # Der Ordner auf dem Server, der als WebDAV-Root dienen soll
 # ---------------------
 
 # Logger für Debugging aktivieren
-_logger = util.get_module_logger(__name__)
+_logger = logging.getLogger(__name__)
 
 
 class SFTPProvider(DAVProvider):
     """
     Ein WsgiDAV Provider, der ein SFTP-Backend verwendet.
     """
+
+    def get_resource_inst(self, path: str, environ: dict):
+        pass
 
     def __init__(self):
         super().__init__()
@@ -208,14 +212,14 @@ class SFTPProvider(DAVProvider):
 # --- Hauptprogramm: Server starten ---
 
 if __name__ == "__main__":
-
+    logging.basicConfig(level=logging.DEBUG)
     # 1. Instanziiere den Provider
     #    Der Provider stellt die Verbindung beim Start her.
     try:
         provider_instance = SFTPProvider()
     except Exception as e:
-        print(f"Fehler beim Initialisieren des SFTPProviders: {e}")
-        print("Bitte überprüfe die SSH_... Konfiguration oben im Skript.")
+        _logger.info(f"Fehler beim Initialisieren des SFTPProviders: {e}")
+        _logger.info("Bitte überprüfe die SSH_... Konfiguration oben im Skript.")
         exit(1)
 
     # 2. Konfiguriere den WsgiDavApp-Server
@@ -239,7 +243,7 @@ if __name__ == "__main__":
     }
 
     # 3. Erstelle die WSGI-App
-    app = WsgiDavApp(config)
+    app = WsgiDAVApp(config)
 
     # 4. Starte den Server (mit cheroot)
     _logger.info("Starte WsgiDAV-Server auf http://localhost:8080/")
