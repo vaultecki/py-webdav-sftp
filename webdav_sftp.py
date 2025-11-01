@@ -79,7 +79,6 @@ class SFTPCollection(DAVCollection):
         child_path = util.join_uri(self.path, name)
         return self.provider.get_resource_inst(child_path, self.environ)
 
-
 # ---------------------------------------------------------------------
 
 class SFTPProvider(DAVProvider):
