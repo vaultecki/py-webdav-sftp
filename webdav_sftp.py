@@ -1,105 +1,108 @@
 import os
 import logging
 import stat
-import posixpath  # Wichtig für die Pfad-Manipulation auf Servern
+import posixpath
 import paramiko
+# DAVNonCollection ist OK, aber DAVCollection ist jetzt abstrakt
 from wsgidav.dav_provider import DAVProvider, DAVNonCollection, DAVCollection
 from wsgidav.wsgidav_app import WsgiDAVApp
 from wsgidav import util
-#from wsgidav.dav_error import DAVNotFoundError, DAVForbidden, DAVError
+#from wsgidav.dav_error import DAVNotFoundError, DAVForbidden, DAVError, DAVError_PreconditionFailed
 from wsgidav.dav_error import DAVError
-import ssh_helper
 
+import ssh_helper
 
 # --- Konfiguration ---
 SSH_HOST = "samson"
 SSH_CONFIG_PATH = "~/.ssh/config"
 REMOTE_PATH = "/tmp"
-# ---------------------
 
-# Logger für Debugging aktivieren
 _logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------
+# NEUE KLASSE: SFTPCollection
+# ---------------------------------------------------------------------
+class SFTPCollection(DAVCollection):
+    """
+    Implementiert die Verzeichnis-Logik für WsgiDAV v4.
+    Diese Klasse MUSS get_member_names() und get_member() implementieren.
+    """
+
+    def __init__(self, path, environ, sftp_provider):
+        # Wir übergeben den Provider an die Basisklasse
+        super().__init__(path, environ)
+        self.provider = sftp_provider  # (self.provider wird von der Basisklasse gesetzt)
+
+    def get_member_names(self):
+        """Gibt eine Liste von Namen (str) im Verzeichnis zurück."""
+        _logger.debug(f"SFTPCollection.get_member_names() for path {self.path}")
+        # Ruft die neue Helfermethode auf dem Provider auf
+        return self.provider._sftp_get_member_names(self.path)
+
+    def get_member(self, name):
+        """Gibt ein einzelnes Kind-Objekt (DAVResource) zurück."""
+        _logger.debug(f"SFTPCollection.get_member(name={name}) for path {self.path}")
+        # Ruft die Haupt-Factory-Methode des Providers auf
+        child_path = util.join_uri(self.path, name)
+        return self.provider.get_resource_inst(child_path, self.environ)
+
+
+# ---------------------------------------------------------------------
+
 class SFTPProvider(DAVProvider):
-    """
-    Ein WsgiDAV Provider, der ein SFTP-Backend verwendet.
-    """
 
-    def get_resource_inst(self, path: str, environ: dict):
-        _logger.info(f"get_resource_inst with path: {path}, env: {environ}")
-        pass
-
+    # ... (__init__, __del__, _to_remote_path bleiben gleich) ...
     def __init__(self):
         super().__init__()
         self.host = SSH_HOST
         self.remote_root = REMOTE_PATH
-
         try:
             data = ssh_helper.get_data_for_host(ssh_conf_file=SSH_CONFIG_PATH, host=self.host)
-            self.port = data.get("port", "22")
+            self.port = int(data.get("port", "22"))
             self.keyfile = os.path.expanduser(data.get("identityfile"))
             self.user = data.get("user", os.getlogin())
         except Exception as e:
-            _logger.error(f"mist: {e}")
-
-        _logger.info(f"Connecting to SFTP server {self.user}@{self.host}...")
-
-        # Baue die SSH-Verbindung auf
+            _logger.error(f"Fehler beim Lesen der SSH-Konfiguration: {e}")
+            raise
+        _logger.info(f"Connecting to SFTP server {self.user}@{self.host}:{self.port}...")
         try:
             self.ssh_client = paramiko.SSHClient()
+            #self.ssh_client.load_system_host_keys()
             # Host-Key automatisch akzeptieren (Riskant in Produktion! Besser Host-Keys prüfen)
             self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-            # Hier Logik für Key-File-Auth hinzufügen, falls 'SSH_PASS' leer ist
             self.ssh_client.connect(
-                self.host,
-                port=self.port,
-                username=self.user,
-                key_filename=self.keyfile,
-                compress=True,
-                timeout=10
+                self.host, port=self.port, username=self.user,
+                key_filename=self.keyfile, compress=True, timeout=10
             )
             self.sftp_client = self.ssh_client.open_sftp()
             _logger.info(f"SFTP connection established. Remote root: {self.remote_root}")
-
-            # Testen, ob der Root-Pfad existiert
             self.sftp_client.stat(self.remote_root)
-
         except Exception as e:
             _logger.error(f"SFTP connection failed: {e}")
             raise
 
     def __del__(self):
-        # Verbindung sauber schließen, wenn das Objekt zerstört wird
-        if hasattr(self, 'sftp_client') and self.sftp_client:
-            self.sftp_client.close()
-        if hasattr(self, 'ssh_client') and self.ssh_client:
-            self.ssh_client.close()
+        if hasattr(self, 'sftp_client') and self.sftp_client: self.sftp_client.close()
+        if hasattr(self, 'ssh_client') and self.ssh_client: self.ssh_client.close()
         _logger.info("SFTP connection closed.")
 
     def _to_remote_path(self, dav_path):
-        """Übersetzt einen WebDAV-Pfad in einen SFTP-Pfad."""
-        # dav_path ist z.B. "/" oder "/ordner/datei.txt"
-        # posixpath.join ist wichtig, um Pfade korrekt zusammenzufügen (z.B. /root/ + /file -> /root/file)
-        # und nicht z.B. // oder Windows-Backslashes zu verwenden.
-
-        # .lstrip('/') entfernt die führende / vom dav_path, damit join korrekt funktioniert
-        remote_path = posixpath.join(self.remote_root, dav_path.lstrip('/'))
-        return remote_path
+        return posixpath.join(self.remote_root, dav_path.lstrip('/'))
 
     def _sftp_attr_to_dav_resource(self, dav_path, attr, name):
-        """Übersetzt paramiko.SFTPAttributes in eine DAV-Ressource (Datei/Ordner)."""
-
-        # Erzeuge den vollen Pfad für diese Ressource im DAV-Namensraum
+        """
+        (ANGEPASST) Übersetzt SFTPAttributes in eine DAV-Ressource.
+        Verwendet jetzt SFTPCollection statt DAVCollection.
+        """
         resource_dav_path = util.join_uri(dav_path, name)
 
         if stat.S_ISDIR(attr.st_mode):
-            # Es ist ein Verzeichnis (Collection)
-            return DAVCollection(resource_dav_path, self.environ)
+            # HIER DIE ÄNDERUNG:
+            # Wir instanziieren unsere neue Klasse und übergeben ihr den Provider
+            return SFTPCollection(resource_dav_path, self.environ, self)
 
-        # Es ist eine Datei (NonCollection)
-        # Wir müssen display_name, content_length und last_modified bereitstellen
+        # DAVNonCollection ist OK
         props = {
             'display_name': name,
             'get_content_length': attr.st_size,
@@ -107,88 +110,170 @@ class SFTPProvider(DAVProvider):
         }
         return DAVNonCollection(resource_dav_path, self.environ, props)
 
-    # --- Implementierung der notwendigen Provider-Methoden ---
+    # --- Implementierung der Provider-Methoden ---
 
-    def get_member(self, path):
-        """Gibt eine einzelne Ressource (Datei/Ordner) zurück."""
-        _logger.debug(f"get_member({path})")
+    def get_resource_inst(self, path: str, environ: dict):
+        """
+        (ANGEPASST) Gibt eine Ressourcen-Instanz für einen Pfad zurück.
+        """
+        _logger.debug(f"get_resource_inst({path})")
+        # Speichere die Umgebung
+        self.environ = environ
         remote_path = self._to_remote_path(path)
 
         try:
             attr = self.sftp_client.stat(remote_path)
         except FileNotFoundError:
-            _logger.warning(f"get_member: {remote_path} not found")
-            raise DAVError(path)
+            _logger.debug(f"get_resource_inst: {remote_path} not found")
+            return None
         except IOError as e:
-            _logger.error(f"get_member: IOError for {remote_path}: {e}")
-            raise DAVError(path)
+            _logger.error(f"get_resource_inst: IOError for {remote_path}: {e}")
+            raise DAVForbidden(path)
 
-        # Wir brauchen den Namen des Elements, nicht den ganzen Pfad
-        name = posixpath.basename(path)
-
-        # Für den Root-Pfad ("/") ist der Name leer
+        # Für den Root-Pfad ("/")
         if path == "/":
-            name = ""
-            return DAVCollection(path, self.environ)
+            # HIER DIE ÄNDERUNG:
+            return SFTPCollection(path, self.environ, self)
 
-        # Den Parent-Pfad bestimmen
+        # Für alle anderen Pfade
+        name = posixpath.basename(path)
         parent_path = posixpath.dirname(path)
 
         return self._sftp_attr_to_dav_resource(parent_path, attr, name)
 
-    def get_member_list(self, path):
-        """Listet den Inhalt eines Ordners auf."""
-        _logger.debug(f"get_member_list({path})")
+    def _sftp_get_member_names(self, path):
+        """
+        (NEUE HELFERMETHODE)
+        Ersetzt die Logik der alten get_member_list.
+        Gibt nur eine Liste von Namen (str) zurück.
+        """
+        _logger.debug(f"_sftp_get_member_names({path})")
         remote_path = self._to_remote_path(path)
-
-        resource_list = []
+        name_list = []
         try:
-            # listdir_attr gibt eine Liste von SFTPAttributes-Objekten zurück
             for attr in self.sftp_client.listdir_attr(remote_path):
-                # Ignoriere "." und ".." Einträge
                 if attr.filename == "." or attr.filename == "..":
                     continue
-
-                resource = self._sftp_attr_to_dav_resource(path, attr, attr.filename)
-                resource_list.append(resource)
+                name_list.append(attr.filename)
 
         except FileNotFoundError:
-            _logger.warning(f"get_member_list: {remote_path} not found")
-            raise DAVError(path)
+            _logger.warning(f"_sftp_get_member_names: {remote_path} not found")
+            raise DAVNotFoundError(path)
         except IOError as e:
-            # z.B. "Permission denied"
-            _logger.error(f"get_member_list: IOError for {remote_path}: {e}")
-            raise DAVError(path)
+            _logger.error(f"_sftp_get_member_names: IOError for {remote_path}: {e}")
+            raise DAVForbidden(path)
 
-        return resource_list
+        return name_list
+
+    # -----------------------------------------------------------------
+    # ENTFERNT: get_member_list(self, path)
+    # Diese Logik befindet sich jetzt in _sftp_get_member_names
+    # und wird von SFTPCollection.get_member_names() aufgerufen.
+    # -----------------------------------------------------------------
 
     def is_read_only(self):
-        """Wir wollen Schreibzugriff erlauben."""
         return False
 
+    # ... (Alle anderen Methoden: create_collection, delete, move, copy,
+    #      get_content_stream, begin_write, end_write,
+    #      _sftp_delete_recursive, _sftp_copy_file, _sftp_copy_recursive
+    #      bleiben exakt gleich wie in deiner letzten Version.) ...
+
     def create_collection(self, path):
-        """Erstellt einen neuen Ordner (MKCOL)."""
         _logger.debug(f"create_collection({path})")
         remote_path = self._to_remote_path(path)
-
         try:
             self.sftp_client.mkdir(remote_path)
         except IOError as e:
             _logger.error(f"create_collection: Failed for {remote_path}: {e}")
             raise DAVForbidden(path)
 
+    def delete(self, path):
+        _logger.debug(f"delete({path})")
+        remote_path = self._to_remote_path(path)
+        try:
+            attr = self.sftp_client.stat(remote_path)
+            if stat.S_ISDIR(attr.st_mode):
+                _logger.debug(f"Recursively deleting directory: {remote_path}")
+                self._sftp_delete_recursive(remote_path)
+            else:
+                _logger.debug(f"Deleting file: {remote_path}")
+                self.sftp_client.remove(remote_path)
+        except FileNotFoundError:
+            _logger.warning(f"delete: {remote_path} not found")
+            raise DAVNotFoundError(path)
+        except IOError as e:
+            _logger.error(f"delete: Failed for {remote_path}: {e}")
+            raise DAVForbidden(path)
+
+    def move(self, src_path, dest_path, overwrite):
+        _logger.debug(f"move({src_path}, {dest_path}, overwrite={overwrite})")
+        remote_src = self._to_remote_path(src_path)
+        remote_dest = self._to_remote_path(dest_path)
+        try:
+            self.sftp_client.stat(remote_dest)
+            if not overwrite:
+                _logger.warning("Move failed: Destination exists and overwrite=False")
+                raise DAVError_PreconditionFailed("Destination already exists.")
+            _logger.debug(f"Move: destination {remote_dest} exists, deleting it first.")
+            self.delete(dest_path)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            _logger.error(f"Move: failed checking/deleting destination {remote_dest}: {e}")
+            raise DAVForbidden(f"Move failed: {e}")
+        try:
+            self.sftp_client.rename(remote_src, remote_dest)
+        except FileNotFoundError:
+            _logger.error(f"Move: source {remote_src} not found")
+            raise DAVNotFoundError(src_path)
+        except IOError as e:
+            _logger.error(f"Move: rename {remote_src} to {remote_dest} failed: {e}")
+            raise DAVForbidden(f"Move failed: {e}")
+
+    def copy(self, src_path, dest_path, overwrite, depth):
+        _logger.debug(f"copy({src_path}, {dest_path}, overwrite={overwrite}, depth={depth})")
+        if depth not in ("0", "infinity"):
+            raise DAVError(501, "Only '0' and 'infinity' depth COPY is supported.")
+        remote_src = self._to_remote_path(src_path)
+        remote_dest = self._to_remote_path(dest_path)
+        try:
+            self.sftp_client.stat(remote_dest)
+            if not overwrite:
+                _logger.warning("Copy failed: Destination exists and overwrite=False")
+                raise DAVError_PreconditionFailed("Destination already exists.")
+            _logger.debug(f"Copy: destination {remote_dest} exists, deleting it first.")
+            self.delete(dest_path)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            _logger.error(f"Copy: failed checking/deleting destination {remote_dest}: {e}")
+            raise DAVForbidden(f"Copy failed: {e}")
+        try:
+            src_attr = self.sftp_client.stat(remote_src)
+            if stat.S_ISDIR(src_attr.st_mode):
+                if depth != "infinity":
+                    raise DAVError(400, "COPY with depth='0' on a collection is not supported.")
+                _logger.debug(f"Recursively copying directory {remote_src} to {remote_dest}")
+                self._sftp_copy_recursive(remote_src, remote_dest)
+            else:
+                _logger.debug(f"Copying file {remote_src} to {remote_dest}")
+                self._sftp_copy_file(remote_src, remote_dest)
+        except FileNotFoundError:
+            _logger.error(f"Copy: source {remote_src} not found")
+            raise DAVNotFoundError(src_path)
+        except Exception as e:
+            _logger.error(f"Copy: operation failed: {e}")
+            raise DAVForbidden(f"Copy failed: {e}")
+
     def get_content_stream(self, path, mode="rb"):
-        """Öffnet einen Stream zum Lesen einer Datei (GET)."""
         _logger.debug(f"get_content_stream({path}, mode={mode})")
         if mode != "rb":
-            raise DAVError(501, "Only read mode ('rb') is implemented for get_content_stream.")
-
+            raise DAVError(501, "Only read mode ('rb') is implemented.")
         remote_path = self._to_remote_path(path)
-
         try:
-            # sftp_client.open gibt ein Datei-Objekt zurück, das wsgidav lesen kann
             stream = self.sftp_client.open(remote_path, "rb")
-            stream.name = path  # WsgiDav erwartet das .name Attribut
+            stream.name = path
             return stream
         except FileNotFoundError:
             raise DAVNotFoundError(path)
@@ -197,12 +282,9 @@ class SFTPProvider(DAVProvider):
             raise DAVForbidden(path)
 
     def begin_write(self, path):
-        """Öffnet einen Stream zum Schreiben einer Datei (PUT)."""
         _logger.debug(f"begin_write({path})")
         remote_path = self._to_remote_path(path)
-
         try:
-            # Wir öffnen die Datei auf dem SFTP-Server im Schreibmodus
             stream = self.sftp_client.open(remote_path, "wb")
             return stream
         except IOError as e:
@@ -210,23 +292,62 @@ class SFTPProvider(DAVProvider):
             raise DAVForbidden(path)
 
     def end_write(self, path, stream):
-        """Schließt den Schreib-Stream."""
         _logger.debug(f"end_write({path})")
-        # Das Stream-Objekt (vom sftp_client) muss nur geschlossen werden.
         stream.close()
 
+    def _sftp_delete_recursive(self, remote_dir_path):
+        try:
+            for attr in self.sftp_client.listdir_attr(remote_dir_path):
+                if attr.filename == '.' or attr.filename == '..': continue
+                item_path = posixpath.join(remote_dir_path, attr.filename)
+                if stat.S_ISDIR(attr.st_mode):
+                    self._sftp_delete_recursive(item_path)
+                else:
+                    self.sftp_client.remove(item_path)
+            self.sftp_client.rmdir(remote_dir_path)
+        except Exception as e:
+            _logger.error(f"Failed recursive delete on {remote_dir_path}: {e}")
+            raise DAVForbidden(f"Recursive delete failed: {e}")
 
-# --- Hauptprogramm: Server starten ---
+    def _sftp_copy_file(self, remote_src, remote_dest):
+        try:
+            with self.sftp_client.open(remote_src, 'rb') as f_src:
+                data = f_src.read()
+            with self.sftp_client.open(remote_dest, 'wb') as f_dest:
+                f_dest.write(data)
+            attr = self.sftp_client.stat(remote_src)
+            self.sftp_client.chmod(remote_dest, attr.st_mode)
+        except Exception as e:
+            _logger.error(f"Failed to copy file {remote_src} to {remote_dest}: {e}")
+            raise
+
+    def _sftp_copy_recursive(self, remote_src_dir, remote_dest_dir):
+        try:
+            self.sftp_client.mkdir(remote_dest_dir)
+            attr_src = self.sftp_client.stat(remote_src_dir)
+            self.sftp_client.chmod(remote_dest_dir, attr_src.st_mode)
+        except IOError as e:
+            _logger.warning(f"Could not mkdir {remote_dest_dir} (may already exist): {e}")
+        for attr in self.sftp_client.listdir_attr(remote_src_dir):
+            if attr.filename == '.' or attr.filename == '..': continue
+            src_item_path = posixpath.join(remote_src_dir, attr.filename)
+            dest_item_path = posixpath.join(remote_dest_dir, attr.filename)
+            if stat.S_ISDIR(attr.st_mode):
+                self._sftp_copy_recursive(src_item_path, dest_item_path)
+            else:
+                self._sftp_copy_file(src_item_path, dest_item_path)
+
+
+# --- (Hauptprogramm bleibt gleich) ---
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    # 1. Instanziiere den Provider
-    #    Der Provider stellt die Verbindung beim Start her.
+
     try:
         provider_instance = SFTPProvider()
     except Exception as e:
-        _logger.info(f"Fehler beim Initialisieren des SFTPProviders: {e}")
-        _logger.info("Bitte überprüfe die SSH_... Konfiguration oben im Skript.")
+        _logger.critical(f"Fehler beim Initialisieren des SFTPProviders: {e}")
+        _logger.critical("Bitte überprüfe die SSH-Konfiguration und die Verbindung.")
         exit(1)
 
     # 2. Konfiguriere den WsgiDavApp-Server
@@ -248,20 +369,11 @@ if __name__ == "__main__":
             "enable_loggers": [],  # Leere Liste -> Aktiviere alle Logger
         },
     }
-
-    # 3. Erstelle die WSGI-App
     app = WsgiDAVApp(config)
-
-    # 4. Starte den Server (mit cheroot)
     _logger.info("Starte WsgiDAV-Server auf http://localhost:8080/")
-
     from cheroot import wsgi
 
-    server = wsgi.Server(
-        bind_addr=("localhost", 8080),
-        wsgi_app=app
-    )
-
+    server = wsgi.Server(bind_addr=("localhost", 8080), wsgi_app=app)
     try:
         server.start()
     except KeyboardInterrupt:
