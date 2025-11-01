@@ -20,9 +20,41 @@ REMOTE_PATH = "/tmp"
 _logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------
-# NEUE KLASSE: SFTPCollection
-# ---------------------------------------------------------------------
+class SFTPNonCollection(DAVNonCollection):
+    """
+    Implementiert die Datei-Logik für WsgiDAV v4.
+    MUSS alle abstrakten Methoden implementieren.
+    """
+    def __init__(self, path, environ, sftp_provider, file_attr):
+        super().__init__(path, environ)
+        self.provider = sftp_provider
+        self.attr = file_attr
+
+    # Implementierung der abstrakten Methoden:
+
+    def get_content_length(self):
+        """Gibt die Dateigröße zurück."""
+        return self.attr.st_size
+
+    def get_etag(self):
+        """Erzeugt einen einfachen ETag aus Größe und Änderungszeit."""
+        # WsgiDAV benötigt ein ETag für Caching und If-Match-Header.
+        # Ein einfacher ETag ist ausreichend.
+        return f'"{self.attr.st_size}-{self.attr.st_mtime}"'
+
+    def support_etag(self):
+        """Gibt an, dass ETag unterstützt wird."""
+        return True
+
+    def get_content(self):
+        """
+        Gibt den Inhalt der Datei als Byte-Stream zurück.
+        Wird für kleine Dateien benötigt.
+        Wir delegieren dies an den Provider.
+        """
+        return self.provider.get_content_stream(self.path, "rb")
+
+
 class SFTPCollection(DAVCollection):
     """
     Implementiert die Verzeichnis-Logik für WsgiDAV v4.
@@ -93,22 +125,16 @@ class SFTPProvider(DAVProvider):
     def _sftp_attr_to_dav_resource(self, dav_path, attr, name):
         """
         (ANGEPASST) Übersetzt SFTPAttributes in eine DAV-Ressource.
-        Verwendet jetzt SFTPCollection statt DAVCollection.
+        Verwendet jetzt SFTPNonCollection statt DAVNonCollection.
         """
         resource_dav_path = util.join_uri(dav_path, name)
 
         if stat.S_ISDIR(attr.st_mode):
-            # HIER DIE ÄNDERUNG:
-            # Wir instanziieren unsere neue Klasse und übergeben ihr den Provider
             return SFTPCollection(resource_dav_path, self.environ, self)
 
-        # DAVNonCollection ist OK
-        props = {
-            'display_name': name,
-            'get_content_length': attr.st_size,
-            'get_last_modified': attr.st_mtime,
-        }
-        return DAVNonCollection(resource_dav_path, self.environ, props)
+        # HIER DIE ÄNDERUNG: Jetzt unsere neue Klasse verwenden
+        # Wir übergeben die SFTP-Attribute (attr), die wir später brauchen
+        return SFTPNonCollection(resource_dav_path, self.environ, self, attr)
 
     # --- Implementierung der Provider-Methoden ---
 
@@ -367,7 +393,7 @@ if __name__ == "__main__":
         "logging": {
             "enable": True,
             "enable_loggers": [],  # Leere Liste -> Aktiviere alle Logger
-        },
+        }
     }
     app = WsgiDAVApp(config)
     _logger.info("Starte WsgiDAV-Server auf http://localhost:8080/")
