@@ -7,14 +7,14 @@ from wsgidav.dav_provider import DAVProvider, DAVNonCollection, DAVCollection
 from wsgidav.wsgidav_app import WsgiDAVApp
 from wsgidav import util
 #from wsgidav.dav_error import DAVNotFoundError, DAVForbidden, DAVError
+from wsgidav.dav_error import DAVError
+import ssh_helper
+
 
 # --- Konfiguration ---
-# TODO: Ersetze dies durch deine echten Server-Daten
-SSH_HOST = "server"
-SSH_PORT = 22
-SSH_USER = "user"
-SSH_PASS = "pass"  # ODER SSH_KEY_FILE = "/pfad/zum/key.pem"
-REMOTE_ROOT_PATH = "/tmp"  # Der Ordner auf dem Server, der als WebDAV-Root dienen soll
+SSH_HOST = "samson"
+SSH_CONFIG_PATH = "~/.ssh/config"
+REMOTE_PATH = "/tmp"
 # ---------------------
 
 # Logger für Debugging aktivieren
@@ -27,15 +27,21 @@ class SFTPProvider(DAVProvider):
     """
 
     def get_resource_inst(self, path: str, environ: dict):
+        _logger.info(f"get_resource_inst with path: {path}, env: {environ}")
         pass
 
     def __init__(self):
         super().__init__()
         self.host = SSH_HOST
-        self.port = SSH_PORT
-        self.user = SSH_USER
-        self.password = SSH_PASS
-        self.remote_root = REMOTE_ROOT_PATH
+        self.remote_root = REMOTE_PATH
+
+        try:
+            data = ssh_helper.get_data_for_host(ssh_conf_file=SSH_CONFIG_PATH, host=self.host)
+            self.port = data.get("port", "22")
+            self.keyfile = os.path.expanduser(data.get("identityfile"))
+            self.user = data.get("user", os.getlogin())
+        except Exception as e:
+            _logger.error(f"mist: {e}")
 
         _logger.info(f"Connecting to SFTP server {self.user}@{self.host}...")
 
@@ -50,7 +56,8 @@ class SFTPProvider(DAVProvider):
                 self.host,
                 port=self.port,
                 username=self.user,
-                password=self.password,
+                key_filename=self.keyfile,
+                compress=True,
                 timeout=10
             )
             self.sftp_client = self.ssh_client.open_sftp()
@@ -111,10 +118,10 @@ class SFTPProvider(DAVProvider):
             attr = self.sftp_client.stat(remote_path)
         except FileNotFoundError:
             _logger.warning(f"get_member: {remote_path} not found")
-            raise DAVNotFoundError(path)
+            raise DAVError(path)
         except IOError as e:
             _logger.error(f"get_member: IOError for {remote_path}: {e}")
-            raise DAVForbidden(path)
+            raise DAVError(path)
 
         # Wir brauchen den Namen des Elements, nicht den ganzen Pfad
         name = posixpath.basename(path)
@@ -147,11 +154,11 @@ class SFTPProvider(DAVProvider):
 
         except FileNotFoundError:
             _logger.warning(f"get_member_list: {remote_path} not found")
-            raise DAVNotFoundError(path)
+            raise DAVError(path)
         except IOError as e:
             # z.B. "Permission denied"
             _logger.error(f"get_member_list: IOError for {remote_path}: {e}")
-            raise DAVForbidden(path)
+            raise DAVError(path)
 
         return resource_list
 
