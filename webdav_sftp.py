@@ -1,3 +1,4 @@
+import io
 import os
 import logging
 import stat
@@ -294,15 +295,29 @@ class SFTPProvider(DAVProvider):
             raise DAVForbidden(f"Copy failed: {e}")
 
     def get_content_stream(self, path, mode="rb"):
+        """
+        (ÜBERARBEITET) Gibt einen Bytestream (io.BytesIO) der Datei zurück.
+        Wir lesen die Daten explizit, um das Timing des SFTP-Streams zu stabilisieren.
+        """
         _logger.debug(f"get_content_stream({path}, mode={mode})")
         if mode != "rb":
             raise DAVError(501, "Only read mode ('rb') is implemented.")
+
         remote_path = self._to_remote_path(path)
+
         try:
-            stream = self.sftp_client.open(remote_path, "rb")
+            # 1. Datei über SFTP öffnen
+            with self.sftp_client.open(remote_path, "rb") as sftp_file:
+                # 2. ALLE Daten aus dem SFTP-Stream lesen
+                data = sftp_file.read()
+            # 3. Daten in einen Standard-Python Memory-Stream (BytesIO) laden
+            stream = io.BytesIO(data)
+            # Wichtig: WsgiDAV erwartet 'name' für Debugging/Logging
             stream.name = path
             return stream
+
         except FileNotFoundError:
+            _logger.error(f"get_content_stream: {remote_path} not found")
             raise DAVNotFoundError(path)
         except IOError as e:
             _logger.error(f"get_content_stream: Failed for {remote_path}: {e}")
