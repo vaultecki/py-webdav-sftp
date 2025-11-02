@@ -40,7 +40,7 @@ class SFTPNonCollection(DAVNonCollection):
         """Erzeugt einen einfachen ETag aus Größe und Änderungszeit."""
         # WsgiDAV benötigt ein ETag für Caching und If-Match-Header.
         # Ein einfacher ETag ist ausreichend.
-        return f'"{self.attr.st_size}-{self.attr.st_mtime}"'
+        return f'{self.attr.st_size}-{self.attr.st_mtime}'
 
     def support_etag(self):
         """Gibt an, dass ETag unterstützt wird."""
@@ -112,6 +112,8 @@ class SFTPProvider(DAVProvider):
         except Exception as e:
             _logger.error(f"SFTP connection failed: {e}")
             raise
+        # todo
+        #self.sftp_client.transort.set_keepalive(10)
 
     def __del__(self):
         if hasattr(self, 'sftp_client') and self.sftp_client: self.sftp_client.close()
