@@ -41,7 +41,7 @@ class SFTPConfig:
         try:
             data = ssh_helper.get_data_for_host(ssh_conf_file=ssh_config_path, host=host)
             return cls(
-                host=host,
+                host=data.get("hostname", host),
                 port=int(data.get("port", "22")),
                 keyfile=expanduser(data.get("identityfile")) if data.get("identityfile") else None,
                 user=data.get("user", os.getenv("USER", "root")),
