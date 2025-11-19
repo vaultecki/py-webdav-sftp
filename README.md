@@ -291,7 +291,7 @@ WantedBy=multi-user.target
 
 ## License
 
-[Specify your license here - e.g., MIT, GPL, etc.]
+[Apache 2.0]
 
 ## Contributing
 
