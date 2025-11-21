@@ -1,4 +1,4 @@
-# ThaDAVSFTP - WebDAV SFTP Bridge
+# PyDAVSFTP - WebDAV SFTP Bridge
 
 A Python-based WebDAV server that bridges remote SFTP filesystems, allowing you to access and manage files on remote SSH servers through the WebDAV protocol. Perfect for integrating legacy systems with modern file management tools.
 
@@ -24,7 +24,7 @@ A Python-based WebDAV server that bridges remote SFTP filesystems, allowing you 
 1. Clone or download this repository:
 ```bash
 git clone <repository-url>
-cd ThaDAVSFTP
+cd PyDAVSFTP
 ```
 
 2. Install dependencies:
