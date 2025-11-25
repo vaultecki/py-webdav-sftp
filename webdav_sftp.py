@@ -188,6 +188,14 @@ class SFTPNonCollection(DAVNonCollection):
         self.provider = sftp_provider
         self.attr = file_attr
 
+    def begin_write(self, content_type=None):
+        """Delegiert begin_write an den Provider"""
+        return self.provider.begin_write(self.path)
+
+    def end_write(self, with_errors):
+        """Wird automatisch nach begin_write aufgerufen"""
+        pass
+
     def get_content_length(self):
         return self.attr.st_size
 
@@ -423,7 +431,7 @@ class SFTPProvider(DAVProvider):
             _logger.error(f"Fehler beim Lesen von {remote_path}: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
 
-    def begin_write(self, path):
+    def begin_write(self, path, content_type=None):
         """
         Startet Schreibvorgang in temporäre Datei.
         Der Upload erfolgt erst in end_write() über den Connection Pool.
