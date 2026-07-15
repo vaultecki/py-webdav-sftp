@@ -2,8 +2,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import logging
 import threading
-import sys
-from pathlib import Path
 from os.path import expanduser
 
 from config_manager import ConfigManager

@@ -132,7 +132,7 @@ class SFTPConnectionPool:
             _logger.warning("Verbindung tot, erstelle neue...")
             try:
                 sftp.close()
-            except:
+            except Exception:
                 pass
             sftp = self._create_connection()
 
@@ -154,7 +154,7 @@ class SFTPConnectionPool:
             # Bei Fehler: Versuche neue Verbindung zu erstellen
             try:
                 sftp.close()
-            except:
+            except Exception:
                 pass
             try:
                 sftp = self._create_connection()
@@ -175,7 +175,7 @@ class SFTPConnectionPool:
                 sftp = self.pool.get_nowait()
                 try:
                     sftp.close()
-                except:
+                except Exception:
                     pass
             except Empty:
                 break
@@ -627,7 +627,7 @@ if __name__ == "__main__":
 
         _logger.info("=" * 60)
         _logger.info("WebDAV-SFTP Server gestartet")
-        _logger.info(f"URL: http://localhost:8080/")
+        _logger.info("URL: http://localhost:8080/")
         _logger.info(f"Backend: {config.user}@{config.host}:{config.remote_path}")
         _logger.info(f"Connection Pool: {config.pool_size} Verbindungen")
         _logger.info("=" * 60)
