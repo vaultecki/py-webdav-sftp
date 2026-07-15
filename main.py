@@ -72,6 +72,10 @@ class WebDAVServerThread(threading.Thread):
 
         except Exception as e:
             logger.error(f"Fehler beim Starten des Servers: {e}")
+            # Falls der Provider schon Verbindungen aufgebaut hat, bevor der
+            # Fehler auftrat (z.B. Port belegt): Pool nicht offen hängen lassen.
+            if self.provider:
+                self.provider.pool.close()
             if self.error_callback:
                 self.error_callback(str(e))
 
@@ -232,16 +236,26 @@ class ThaDAVScpGUI:
                 msg = self.format(record)
 
                 def append():
-                    self.text_widget.config(state="normal")
-                    self.text_widget.insert("end", msg + "\n")
-                    self.text_widget.see("end")
-                    self.text_widget.config(state="disabled")
+                    try:
+                        self.text_widget.config(state="normal")
+                        self.text_widget.insert("end", msg + "\n")
+                        self.text_widget.see("end")
+                        self.text_widget.config(state="disabled")
+                    except tk.TclError:
+                        # Widget wurde bereits zerstört (z.B. Log-Eintrag eines
+                        # Hintergrund-Threads nach dem Schließen des Fensters)
+                        pass
 
-                self.text_widget.after(0, append)
+                try:
+                    self.text_widget.after(0, append)
+                except RuntimeError:
+                    # Tk-Mainloop läuft nicht mehr
+                    pass
 
-        handler = TextHandler(self.log_text)
-        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S'))
-        logging.getLogger().addHandler(handler)
+        self.log_handler = TextHandler(self.log_text)
+        self.log_handler.setFormatter(
+            logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S'))
+        logging.getLogger().addHandler(self.log_handler)
 
     def browse_ssh_config(self):
         """Öffnet Dateidialog für SSH Config"""
@@ -258,10 +272,7 @@ class ThaDAVScpGUI:
         """Lädt verfügbare Hosts aus SSH Config"""
         try:
             ssh_config_path = expanduser(self.ssh_config_var.get())
-            from sshconf import read_ssh_config
-
-            config = read_ssh_config(ssh_config_path)
-            hosts = [h for h in config.hosts() if h != "*"]
+            hosts = ssh_helper.get_hosts(ssh_config_path)
 
             self.host_combo['values'] = hosts
             if hosts and not self.host_var.get():
@@ -421,9 +432,14 @@ class ThaDAVScpGUI:
         if self.is_running:
             if messagebox.askokcancel("Beenden", "Server läuft noch. Wirklich beenden?"):
                 self.stop_server()
-                self.root.destroy()
-        else:
-            self.root.destroy()
+            else:
+                return
+
+        # Handler entfernen, bevor das Fenster weg ist - sonst versucht ein
+        # später eintreffender Log-Eintrag (z.B. von einem Hintergrund-Thread),
+        # auf ein bereits zerstörtes Widget zuzugreifen.
+        logging.getLogger().removeHandler(self.log_handler)
+        self.root.destroy()
 
 
 def main():

@@ -1,10 +1,30 @@
-from sshconf import read_ssh_config, empty_ssh_config_file
+import paramiko
 from os.path import expanduser
 
 
+def _load_config(ssh_conf_file="~/.ssh/config"):
+    config = paramiko.SSHConfig()
+    with open(expanduser(ssh_conf_file)) as f:
+        config.parse(f)
+    return config
+
+
+def get_hosts(ssh_conf_file="~/.ssh/config"):
+    """Gibt alle explizit definierten Hosts zurück (ohne Wildcard-Patterns)"""
+    config = _load_config(ssh_conf_file)
+    return sorted(h for h in config.get_hostnames() if "*" not in h and "?" not in h)
+
+
 def get_data_for_host(ssh_conf_file="~/.ssh/config", host="localhost"):
-    c = read_ssh_config(expanduser(ssh_conf_file))
-    return c.host(host)
+    config = _load_config(ssh_conf_file)
+    data = config.lookup(host)
+
+    # sshconf gab identityfile als String zurück, paramiko als Liste
+    identityfile = data.get("identityfile")
+    if isinstance(identityfile, list):
+        data["identityfile"] = identityfile[0] if identityfile else None
+
+    return data
 
 
 if __name__ == "__main__":

@@ -114,51 +114,56 @@ class SFTPConnectionPool:
 
         return sftp
 
-    @contextmanager
-    def get_connection(self):
-        """Context Manager für sichere Verbindungs-Nutzung"""
+    def acquire(self):
+        """Entnimmt eine geprüfte Verbindung aus dem Pool. Muss mit release() zurückgegeben werden."""
         if self._closed:
             raise RuntimeError("Connection Pool wurde bereits geschlossen")
 
-        sftp = None
         try:
-            # Hole Verbindung aus Pool (mit Timeout)
             sftp = self.pool.get(timeout=5)
-
-            # Teste ob Verbindung noch aktiv ist
-            try:
-                sftp.stat('.')
-            except Exception:
-                _logger.warning("Verbindung tot, erstelle neue...")
-                try:
-                    sftp.close()
-                except:
-                    pass
-                sftp = self._create_connection()
-
-            yield sftp
-
         except Empty:
             _logger.error("Pool timeout - alle Verbindungen belegt")
             raise DAVError(HTTP_FORBIDDEN, "Server überlastet")
+
+        # Teste ob Verbindung noch aktiv ist
+        try:
+            sftp.stat('.')
+        except Exception:
+            _logger.warning("Verbindung tot, erstelle neue...")
+            try:
+                sftp.close()
+            except:
+                pass
+            sftp = self._create_connection()
+
+        return sftp
+
+    def release(self, sftp):
+        """Gibt eine mit acquire() entnommene Verbindung zurück in den Pool"""
+        if sftp and not self._closed:
+            self.pool.put(sftp)
+
+    @contextmanager
+    def get_connection(self):
+        """Context Manager für sichere Verbindungs-Nutzung"""
+        sftp = self.acquire()
+        try:
+            yield sftp
         except Exception as e:
             _logger.error(f"Fehler bei SFTP-Operation: {e}")
             # Bei Fehler: Versuche neue Verbindung zu erstellen
-            if sftp:
-                try:
-                    sftp.close()
-                except:
-                    pass
-                try:
-                    sftp = self._create_connection()
-                except Exception as conn_error:
-                    _logger.error(f"Reconnect fehlgeschlagen: {conn_error}")
-                    sftp = None
+            try:
+                sftp.close()
+            except:
+                pass
+            try:
+                sftp = self._create_connection()
+            except Exception as conn_error:
+                _logger.error(f"Reconnect fehlgeschlagen: {conn_error}")
+                sftp = None
             raise
         finally:
-            # Gebe Verbindung zurück in Pool
-            if sftp and not self._closed:
-                self.pool.put(sftp)
+            self.release(sftp)
 
     def close(self):
         """Schließt alle Verbindungen im Pool"""
@@ -177,6 +182,39 @@ class SFTPConnectionPool:
 
 
 # ============================================================================
+# SCHREIB-STREAM
+# ============================================================================
+
+class _SFTPWriteFile:
+    """
+    Wrappt einen SFTP-Filehandle, der zum Schreiben geöffnet wurde.
+    Gibt die Pool-Verbindung bei close() zurück (idempotent, da WsgiDAV
+    close() sowohl selbst als auch über end_write() aufrufen kann).
+    """
+
+    def __init__(self, pool, sftp, remote_file):
+        self._pool = pool
+        self._sftp = sftp
+        self._remote_file = remote_file
+        self._closed = False
+
+    def write(self, data):
+        return self._remote_file.write(data)
+
+    def writelines(self, lines):
+        return self._remote_file.writelines(lines)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._remote_file.close()
+        finally:
+            self._pool.release(self._sftp)
+
+
+# ============================================================================
 # DAV RESOURCES
 # ============================================================================
 
@@ -187,14 +225,18 @@ class SFTPNonCollection(DAVNonCollection):
         super().__init__(path, environ)
         self.provider = sftp_provider
         self.attr = file_attr
+        self._write_file = None
 
     def begin_write(self, content_type=None):
-        """Delegiert begin_write an den Provider"""
-        return self.provider.begin_write(self.path)
+        """Öffnet einen SFTP-Filehandle zum Schreiben (über den Connection Pool)"""
+        self._write_file = self.provider.begin_write(self.path)
+        return self._write_file
 
     def end_write(self, with_errors):
-        """Wird automatisch nach begin_write aufgerufen"""
-        pass
+        """Wird von WsgiDAV nach begin_write aufgerufen (auch bei Fehlern, dann ggf. ohne close())"""
+        if self._write_file is not None:
+            self._write_file.close()
+            self._write_file = None
 
     def get_content_length(self):
         return self.attr.st_size
@@ -225,6 +267,22 @@ class SFTPCollection(DAVCollection):
         child_path = util.join_uri(self.path, name)
         return self.provider.get_resource_inst(child_path, self.environ)
 
+    def create_empty_resource(self, name):
+        """Erstellt eine leere Datei (für PUT auf einen bisher unbekannten Pfad)"""
+        _logger.debug(f"SFTPCollection.create_empty_resource({name}) for {self.path}")
+        child_path = util.join_uri(self.path, name)
+        remote_path = self.provider._to_remote_path(child_path)
+
+        try:
+            with self.provider.pool.get_connection() as sftp:
+                with sftp.open(remote_path, "wb"):
+                    pass
+        except IOError as e:
+            _logger.error(f"Fehler beim Erstellen von {remote_path}: {e}")
+            raise DAVError(HTTP_FORBIDDEN, str(e))
+
+        return self.provider.get_resource_inst(child_path, self.environ)
+
 
 # ============================================================================
 # SFTP PROVIDER
@@ -239,10 +297,11 @@ class SFTPProvider(DAVProvider):
         self.pool = SFTPConnectionPool(config)
         _logger.info(f"SFTPProvider initialisiert: {config.user}@{config.host}:{config.port}")
 
-    def __del__(self):
-        """Cleanup beim Beenden"""
-        if hasattr(self, 'pool'):
-            self.pool.close()
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.pool.close()
 
     def _to_remote_path(self, dav_path):
         """Konvertiert DAV-Pfad zu Remote-SFTP-Pfad"""
@@ -431,54 +490,23 @@ class SFTPProvider(DAVProvider):
             _logger.error(f"Fehler beim Lesen von {remote_path}: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
 
-    def begin_write(self, path, content_type=None):
+    def begin_write(self, path):
         """
-        Startet Schreibvorgang in temporäre Datei.
-        Der Upload erfolgt erst in end_write() über den Connection Pool.
+        Öffnet einen SFTP-Filehandle zum direkten Schreiben.
+        Die Pool-Verbindung wird bis close() gehalten und danach zurückgegeben.
         """
         _logger.debug(f"begin_write({path})")
+        remote_path = self._to_remote_path(path)
 
-        # Erstelle temporäre Datei im Arbeitsspeicher
-        temp_stream = io.BytesIO()
-
-        # Speichere Metadaten für end_write
-        temp_stream._dav_path = path
-        temp_stream._remote_path = self._to_remote_path(path)
-
-        return temp_stream
-
-    def end_write(self, path, stream):
-        """
-        Beendet Schreibvorgang und lädt Datei zu SFTP hoch.
-        Verwendet Connection Pool - keine blockierte Connection!
-        """
-        _logger.debug(f"end_write({path})")
-
-        remote_path = getattr(stream, '_remote_path', self._to_remote_path(path))
-
+        sftp = self.pool.acquire()
         try:
-            # Hole Daten aus temporärem Stream
-            stream.seek(0)
-            data = stream.read()
-            stream.close()
-
-            _logger.debug(f"Uploade {len(data)} bytes zu {remote_path}")
-
-            # Jetzt Upload über Connection Pool (thread-sicher!)
-            with self.pool.get_connection() as sftp:
-                with sftp.open(remote_path, "wb") as remote_file:
-                    remote_file.write(data)
-
-            _logger.debug(f"Upload erfolgreich: {remote_path}")
-
-        except Exception as e:
-            _logger.error(f"Fehler bei end_write für {remote_path}: {e}")
-            # Cleanup: Schließe Stream falls noch offen
-            try:
-                stream.close()
-            except:
-                pass
+            remote_file = sftp.open(remote_path, "wb")
+        except IOError as e:
+            self.pool.release(sftp)
+            _logger.error(f"Fehler beim Öffnen von {remote_path} zum Schreiben: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
+
+        return _SFTPWriteFile(self.pool, sftp, remote_file)
 
     # ------------------------------------------------------------------------
     # Hilfsmethoden
@@ -572,47 +600,50 @@ if __name__ == "__main__":
         _logger.critical("Bitte SSH-Konfiguration überprüfen!")
         exit(1)
 
-    # Konfiguriere WsgiDAV
-    webdav_config = {
-        "provider_mapping": {
-            "/": provider,
-        },
-        "http_authenticator": {
-            "domain_controller": None  # Keine WebDAV-Auth
-        },
-        "simple_dc": {
-            "user_mapping": {
-                "*": True  # ⚠️ ACHTUNG: Jeder hat Zugriff!
+    # Ab hier ist der Pool offen - garantiert schließen, egal wie die
+    # Server-Ausführung endet (Ctrl+C, Bind-Fehler, unerwartete Exception).
+    with provider:
+        # Konfiguriere WsgiDAV
+        webdav_config = {
+            "provider_mapping": {
+                "/": provider,
+            },
+            "http_authenticator": {
+                "domain_controller": None  # Keine WebDAV-Auth
+            },
+            "simple_dc": {
+                "user_mapping": {
+                    "*": True  # ⚠️ ACHTUNG: Jeder hat Zugriff!
+                }
+            },
+            "verbose": 3,
+            "logging": {
+                "enable": True,
+                "enable_loggers": [],
             }
-        },
-        "verbose": 3,
-        "logging": {
-            "enable": True,
-            "enable_loggers": [],
         }
-    }
 
-    app = WsgiDAVApp(webdav_config)
+        app = WsgiDAVApp(webdav_config)
 
-    _logger.info("=" * 60)
-    _logger.info("WebDAV-SFTP Server gestartet")
-    _logger.info(f"URL: http://localhost:8080/")
-    _logger.info(f"Backend: {config.user}@{config.host}:{config.remote_path}")
-    _logger.info(f"Connection Pool: {config.pool_size} Verbindungen")
-    _logger.info("=" * 60)
+        _logger.info("=" * 60)
+        _logger.info("WebDAV-SFTP Server gestartet")
+        _logger.info(f"URL: http://localhost:8080/")
+        _logger.info(f"Backend: {config.user}@{config.host}:{config.remote_path}")
+        _logger.info(f"Connection Pool: {config.pool_size} Verbindungen")
+        _logger.info("=" * 60)
 
-    from cheroot import wsgi
+        from cheroot import wsgi
 
-    server = wsgi.Server(
-        bind_addr=("localhost", 8080),
-        wsgi_app=app,
-        numthreads=10  # Unterstützt bis zu 10 parallele Requests
-    )
+        server = wsgi.Server(
+            bind_addr=("localhost", 8080),
+            wsgi_app=app,
+            numthreads=10  # Unterstützt bis zu 10 parallele Requests
+        )
 
-    try:
-        server.start()
-    except KeyboardInterrupt:
-        _logger.info("\nServer wird gestoppt...")
-        provider.pool.close()
-        server.stop()
-        _logger.info("Auf Wiedersehen!")
+        try:
+            server.start()
+        except KeyboardInterrupt:
+            _logger.info("Server wird gestoppt...")
+        finally:
+            server.stop()
+            _logger.info("Auf Wiedersehen!")
