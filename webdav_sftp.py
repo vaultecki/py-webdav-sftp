@@ -6,7 +6,6 @@ import paramiko
 from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Queue, Empty
-import threading
 from typing import Optional
 from wsgidav.dav_provider import DAVProvider, DAVNonCollection, DAVCollection
 from wsgidav.wsgidav_app import WsgiDAVApp
@@ -63,7 +62,6 @@ class SFTPConnectionPool:
     def __init__(self, config: SFTPConfig):
         self.config = config
         self.pool = Queue(maxsize=config.pool_size)
-        self.lock = threading.Lock()
         self._closed = False
 
         _logger.info(f"Initialisiere SFTP Connection Pool (Size: {config.pool_size})")
