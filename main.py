@@ -9,6 +9,7 @@ from webdav_sftp import SFTPConfig, SFTPProvider
 from wsgidav.wsgidav_app import WsgiDAVApp
 from cheroot import wsgi
 import ssh_helper
+import windows_mount
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,15 +21,17 @@ logger = logging.getLogger(__name__)
 class WebDAVServerThread(threading.Thread):
     """Thread für WebDAV-Server"""
 
-    def __init__(self, config, webdav_port, error_callback=None):
+    def __init__(self, config, webdav_port, drive_letter=None, error_callback=None):
         super().__init__(daemon=True)
         self.config = config
         self.webdav_port = webdav_port
+        self.drive_letter = drive_letter
         self.server = None
         self.provider = None
         self._stop_event = threading.Event()
         self.error_callback = error_callback
         self.started = False
+        self.mounted = False
 
     def run(self):
         try:
@@ -64,14 +67,25 @@ class WebDAVServerThread(threading.Thread):
                 numthreads=10
             )
 
+            # prepare() bindet den Socket bereits - erst danach ist der
+            # Server unter dem Port wirklich erreichbar (start() = prepare() + serve()).
+            self.server.prepare()
             self.started = True
             logger.info(f"WebDAV Server gestartet auf Port {self.webdav_port}")
-            self.server.start()
+
+            if self.drive_letter:
+                self.mounted = windows_mount.mount_drive(self.drive_letter, self.webdav_port)
+
+            self.server.serve()
 
         except Exception as e:
             logger.error(f"Fehler beim Starten des Servers: {e}")
-            # Falls der Provider schon Verbindungen aufgebaut hat, bevor der
-            # Fehler auftrat (z.B. Port belegt): Pool nicht offen hängen lassen.
+            # Falls Laufwerk/Pool schon aufgebaut wurden, bevor der Fehler
+            # auftrat (z.B. Server stürzt waehrend serve() ab): nichts offen
+            # bzw. gemountet hängen lassen.
+            if self.mounted:
+                windows_mount.unmount_drive(self.drive_letter)
+                self.mounted = False
             if self.provider:
                 self.provider.pool.close()
             if self.error_callback:
@@ -79,6 +93,9 @@ class WebDAVServerThread(threading.Thread):
 
     def stop(self):
         """Stoppt den Server"""
+        if self.mounted:
+            windows_mount.unmount_drive(self.drive_letter)
+            self.mounted = False
         if self.server:
             logger.info("Stoppe WebDAV Server...")
             self.server.stop()
@@ -89,6 +106,9 @@ class WebDAVServerThread(threading.Thread):
 
 class ThaDAVScpGUI:
     """Hauptfenster der Anwendung"""
+
+    DRIVE_LETTER_DISABLED = "Deaktiviert"
+    DRIVE_LETTER_CHOICES = [DRIVE_LETTER_DISABLED] + [chr(c) for c in range(ord("D"), ord("Z") + 1)]
 
     def __init__(self, root):
         self.root = root
@@ -187,6 +207,18 @@ class ThaDAVScpGUI:
                                                                                                           column=1,
                                                                                                           sticky="w",
                                                                                                           pady=2)
+
+        # Laufwerksbuchstabe (Windows) - bindet den WebDAV-Server nach dem
+        # Start automatisch per 'net use' als Laufwerk ein.
+        ttk.Label(webdav_frame, text="Laufwerk (Windows):").grid(row=1, column=0, sticky="w", pady=2)
+        self.drive_letter_var = tk.StringVar(value=self.DRIVE_LETTER_DISABLED)
+        ttk.Combobox(
+            webdav_frame,
+            textvariable=self.drive_letter_var,
+            values=self.DRIVE_LETTER_CHOICES,
+            state="readonly",
+            width=12,
+        ).grid(row=1, column=1, sticky="w", pady=2)
 
         webdav_frame.columnconfigure(1, weight=1)
 
@@ -289,6 +321,7 @@ class ThaDAVScpGUI:
         self.remote_path_var.set(self.config.get("remote_path", "/tmp"))
         self.pool_size_var.set(self.config.get("pool_size", 3))
         self.webdav_port_var.set(self.config.get("webdav_port", 8080))
+        self.drive_letter_var.set(self.config.get("drive_letter", "") or self.DRIVE_LETTER_DISABLED)
         self.autostart_var.set(self.config.get("autostart", False))
 
         # Lade Hosts wenn Config-Datei existiert
@@ -304,6 +337,8 @@ class ThaDAVScpGUI:
         self.config.set("remote_path", self.remote_path_var.get())
         self.config.set("pool_size", self.pool_size_var.get())
         self.config.set("webdav_port", self.webdav_port_var.get())
+        drive_letter = self.drive_letter_var.get()
+        self.config.set("drive_letter", "" if drive_letter == self.DRIVE_LETTER_DISABLED else drive_letter)
         self.config.set("autostart", self.autostart_var.get())
         self.config.save()
 
@@ -340,9 +375,11 @@ class ThaDAVScpGUI:
             self.log("⏳ Starte Server, baue SSH-Verbindungen auf...")
 
             # Starte Server Thread mit Error-Callback
+            drive_letter = self.drive_letter_var.get()
             self.server_thread = WebDAVServerThread(
                 sftp_config,
                 self.webdav_port_var.get(),
+                drive_letter=None if drive_letter == self.DRIVE_LETTER_DISABLED else drive_letter,
                 error_callback=self.on_server_error
             )
             self.server_thread.start()
