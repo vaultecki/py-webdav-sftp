@@ -1,4 +1,3 @@
-import io
 import os
 import logging
 import stat
@@ -8,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Queue, Empty
 import threading
+from typing import Optional
 from wsgidav.dav_provider import DAVProvider, DAVNonCollection, DAVCollection
 from wsgidav.wsgidav_app import WsgiDAVApp
 from wsgidav import util
@@ -29,8 +29,8 @@ class SFTPConfig:
     host: str
     remote_path: str
     port: int = 22
-    user: str = None
-    keyfile: str = None
+    user: Optional[str] = None
+    keyfile: Optional[str] = None
     pool_size: int = 3
     connection_timeout: int = 10
 
@@ -182,7 +182,7 @@ class SFTPConnectionPool:
 
 
 # ============================================================================
-# SCHREIB-STREAM
+# SCHREIB-/LESE-STREAMS
 # ============================================================================
 
 class _SFTPWriteFile:
@@ -203,6 +203,39 @@ class _SFTPWriteFile:
 
     def writelines(self, lines):
         return self._remote_file.writelines(lines)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._remote_file.close()
+        finally:
+            self._pool.release(self._sftp)
+
+
+class _SFTPReadFile:
+    """
+    Wrappt einen SFTP-Filehandle, der zum Lesen geöffnet wurde.
+    Streamt direkt vom SFTP-Server statt die komplette Datei vorher in
+    den Speicher zu laden. Gibt die Pool-Verbindung bei close() zurück.
+    """
+
+    def __init__(self, pool, sftp, remote_file, name):
+        self._pool = pool
+        self._sftp = sftp
+        self._remote_file = remote_file
+        self._closed = False
+        self.name = name
+
+    def read(self, size=-1):
+        return self._remote_file.read(size)
+
+    def seek(self, offset, whence=0):
+        return self._remote_file.seek(offset, whence)
+
+    def tell(self):
+        return self._remote_file.tell()
 
     def close(self):
         if self._closed:
@@ -483,7 +516,11 @@ class SFTPProvider(DAVProvider):
                 raise DAVError(HTTP_FORBIDDEN, str(e))
 
     def get_content_stream(self, path, mode="rb"):
-        """Gibt Dateiinhalt als BytesIO-Stream zurück"""
+        """
+        Öffnet einen SFTP-Filehandle zum direkten Lesen (Streaming statt
+        die komplette Datei vorher in den Speicher zu laden).
+        Die Pool-Verbindung wird bis close() gehalten und danach zurückgegeben.
+        """
         _logger.debug(f"get_content_stream({path})")
 
         if mode != "rb":
@@ -491,19 +528,18 @@ class SFTPProvider(DAVProvider):
 
         remote_path = self._to_remote_path(path)
 
+        sftp = self.pool.acquire()
         try:
-            with self.pool.get_connection() as sftp:
-                with sftp.open(remote_path, "rb") as f:
-                    data = f.read()
-
-            stream = io.BytesIO(data)
-            stream.name = path
-            return stream
+            remote_file = sftp.open(remote_path, "rb")
         except FileNotFoundError:
+            self.pool.release(sftp)
             raise DAVError(HTTP_NOT_FOUND, f"File not found: {path}")
         except IOError as e:
+            self.pool.release(sftp)
             _logger.error(f"Fehler beim Lesen von {remote_path}: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
+
+        return _SFTPReadFile(self.pool, sftp, remote_file, name=path)
 
     def begin_write(self, path):
         """
