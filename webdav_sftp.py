@@ -34,8 +34,9 @@ class SFTPConfig:
 
     @classmethod
     def from_ssh_config(cls, host: str, ssh_config_path: str = "~/.ssh/config",
-                        remote_path: str = "/tmp", pool_size: int = 3):
+                        remote_path: str = "/tmp", pool_size: int = 3, logger=None):
         """Lädt Config aus SSH-Konfigurationsdatei"""
+        log = logger or _logger
         try:
             data = ssh_helper.get_data_for_host(ssh_conf_file=ssh_config_path, host=host)
             return cls(
@@ -47,7 +48,7 @@ class SFTPConfig:
                 pool_size=pool_size
             )
         except Exception as e:
-            _logger.error(f"Fehler beim Lesen der SSH-Konfiguration: {e}")
+            log.error(f"Fehler beim Lesen der SSH-Konfiguration: {e}")
             raise
 
 
@@ -58,21 +59,22 @@ class SFTPConfig:
 class SFTPConnectionPool:
     """Thread-sicherer Connection Pool für SFTP-Verbindungen"""
 
-    def __init__(self, config: SFTPConfig):
+    def __init__(self, config: SFTPConfig, logger=None):
         self.config = config
         self.pool = Queue(maxsize=config.pool_size)
         self._closed = False
+        self._logger = logger or _logger
 
-        _logger.info(f"Initialisiere SFTP Connection Pool (Size: {config.pool_size})")
+        self._logger.info(f"Initialisiere SFTP Connection Pool (Size: {config.pool_size})")
 
         # Initialisiere Pool mit Verbindungen
         for i in range(config.pool_size):
             try:
                 conn = self._create_connection()
                 self.pool.put(conn)
-                _logger.debug(f"Connection {i + 1}/{config.pool_size} erstellt")
+                self._logger.debug(f"Connection {i + 1}/{config.pool_size} erstellt")
             except Exception as e:
-                _logger.error(f"Fehler beim Erstellen von Connection {i + 1}: {e}")
+                self._logger.error(f"Fehler beim Erstellen von Connection {i + 1}: {e}")
                 raise
 
     def _create_connection(self):
@@ -83,7 +85,7 @@ class SFTPConnectionPool:
         try:
             ssh.load_host_keys(expanduser('~/.ssh/known_hosts'))
         except FileNotFoundError:
-            _logger.warning("~/.ssh/known_hosts nicht gefunden. Verwende AutoAddPolicy (UNSICHER!)")
+            self._logger.warning("~/.ssh/known_hosts nicht gefunden. Verwende AutoAddPolicy (UNSICHER!)")
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
         # Verbinde
@@ -119,14 +121,14 @@ class SFTPConnectionPool:
         try:
             sftp = self.pool.get(timeout=5)
         except Empty:
-            _logger.error("Pool timeout - alle Verbindungen belegt")
+            self._logger.error("Pool timeout - alle Verbindungen belegt")
             raise DAVError(HTTP_FORBIDDEN, "Server überlastet")
 
         # Teste ob Verbindung noch aktiv ist
         try:
             sftp.stat('.')
         except Exception:
-            _logger.warning("Verbindung tot, erstelle neue...")
+            self._logger.warning("Verbindung tot, erstelle neue...")
             try:
                 sftp.close()
             except Exception:
@@ -147,7 +149,7 @@ class SFTPConnectionPool:
         try:
             yield sftp
         except Exception as e:
-            _logger.error(f"Fehler bei SFTP-Operation: {e}")
+            self._logger.error(f"Fehler bei SFTP-Operation: {e}")
             # Bei Fehler: Versuche neue Verbindung zu erstellen
             try:
                 sftp.close()
@@ -156,7 +158,7 @@ class SFTPConnectionPool:
             try:
                 sftp = self._create_connection()
             except Exception as conn_error:
-                _logger.error(f"Reconnect fehlgeschlagen: {conn_error}")
+                self._logger.error(f"Reconnect fehlgeschlagen: {conn_error}")
                 sftp = None
             raise
         finally:
@@ -164,7 +166,7 @@ class SFTPConnectionPool:
 
     def close(self):
         """Schließt alle Verbindungen im Pool"""
-        _logger.info("Schließe Connection Pool...")
+        self._logger.info("Schließe Connection Pool...")
         self._closed = True
 
         while not self.pool.empty():
@@ -289,17 +291,17 @@ class SFTPCollection(DAVCollection):
         self.provider = sftp_provider
 
     def get_member_names(self):
-        _logger.debug(f"SFTPCollection.get_member_names() for {self.path}")
+        self.provider._logger.debug(f"SFTPCollection.get_member_names() for {self.path}")
         return self.provider._sftp_get_member_names(self.path)
 
     def get_member(self, name):
-        _logger.debug(f"SFTPCollection.get_member({name}) for {self.path}")
+        self.provider._logger.debug(f"SFTPCollection.get_member({name}) for {self.path}")
         child_path = util.join_uri(self.path, name)
         return self.provider.get_resource_inst(child_path, self.environ)
 
     def create_empty_resource(self, name):
         """Erstellt eine leere Datei (für PUT auf einen bisher unbekannten Pfad)"""
-        _logger.debug(f"SFTPCollection.create_empty_resource({name}) for {self.path}")
+        self.provider._logger.debug(f"SFTPCollection.create_empty_resource({name}) for {self.path}")
         child_path = util.join_uri(self.path, name)
         remote_path = self.provider._to_remote_path(child_path)
 
@@ -308,7 +310,7 @@ class SFTPCollection(DAVCollection):
                 with sftp.open(remote_path, "wb"):
                     pass
         except IOError as e:
-            _logger.error(f"Fehler beim Erstellen von {remote_path}: {e}")
+            self.provider._logger.error(f"Fehler beim Erstellen von {remote_path}: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
 
         return self.provider.get_resource_inst(child_path, self.environ)
@@ -321,12 +323,13 @@ class SFTPCollection(DAVCollection):
 class SFTPProvider(DAVProvider):
     """WebDAV Provider mit SFTP-Backend und Connection Pooling"""
 
-    def __init__(self, config: SFTPConfig):
+    def __init__(self, config: SFTPConfig, logger=None):
         super().__init__()
         self.config = config
-        self.pool = SFTPConnectionPool(config)
+        self._logger = logger or _logger
+        self.pool = SFTPConnectionPool(config, logger=self._logger)
         self._remote_root = posixpath.normpath(config.remote_path)
-        _logger.info(f"SFTPProvider initialisiert: {config.user}@{config.host}:{config.port}")
+        self._logger.info(f"SFTPProvider initialisiert: {config.user}@{config.host}:{config.port}")
 
     def __enter__(self):
         return self
@@ -343,7 +346,7 @@ class SFTPProvider(DAVProvider):
 
         root_prefix = self._remote_root.rstrip('/') + '/'
         if remote_path != self._remote_root and not remote_path.startswith(root_prefix):
-            _logger.warning(f"Pfad-Traversal-Versuch abgewiesen: {dav_path!r} -> {remote_path!r}")
+            self._logger.warning(f"Pfad-Traversal-Versuch abgewiesen: {dav_path!r} -> {remote_path!r}")
             raise DAVError(HTTP_FORBIDDEN, "Access outside root is not allowed")
 
         return remote_path
@@ -366,17 +369,17 @@ class SFTPProvider(DAVProvider):
         Gibt Ressourcen-Instanz für einen Pfad zurück.
         WICHTIG: environ wird NICHT gespeichert (Race Condition vermeiden!)
         """
-        _logger.debug(f"get_resource_inst({path})")
+        self._logger.debug(f"get_resource_inst({path})")
         remote_path = self._to_remote_path(path)
 
         try:
             with self.pool.get_connection() as sftp:
                 attr = sftp.stat(remote_path)
         except FileNotFoundError:
-            _logger.debug(f"Ressource nicht gefunden: {remote_path}")
+            self._logger.debug(f"Ressource nicht gefunden: {remote_path}")
             return None
         except IOError as e:
-            _logger.error(f"IOError bei get_resource_inst für {remote_path}: {e}")
+            self._logger.error(f"IOError bei get_resource_inst für {remote_path}: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
 
         # Root-Verzeichnis
@@ -391,7 +394,7 @@ class SFTPProvider(DAVProvider):
 
     def _sftp_get_member_names(self, path):
         """Gibt Liste von Dateinamen in einem Verzeichnis zurück"""
-        _logger.debug(f"_sftp_get_member_names({path})")
+        self._logger.debug(f"_sftp_get_member_names({path})")
         remote_path = self._to_remote_path(path)
 
         try:
@@ -402,10 +405,10 @@ class SFTPProvider(DAVProvider):
                         names.append(attr.filename)
                 return names
         except FileNotFoundError:
-            _logger.warning(f"Verzeichnis nicht gefunden: {remote_path}")
+            self._logger.warning(f"Verzeichnis nicht gefunden: {remote_path}")
             raise DAVError(HTTP_NOT_FOUND, f"Path not found: {path}")
         except IOError as e:
-            _logger.error(f"IOError bei _sftp_get_member_names für {remote_path}: {e}")
+            self._logger.error(f"IOError bei _sftp_get_member_names für {remote_path}: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
 
     def is_read_only(self):
@@ -413,14 +416,14 @@ class SFTPProvider(DAVProvider):
 
     def create_collection(self, path):
         """Erstellt ein Verzeichnis"""
-        _logger.debug(f"create_collection({path})")
+        self._logger.debug(f"create_collection({path})")
         remote_path = self._to_remote_path(path)
 
         try:
             with self.pool.get_connection() as sftp:
                 sftp.mkdir(remote_path)
         except IOError as e:
-            _logger.error(f"Fehler beim Erstellen von {remote_path}: {e}")
+            self._logger.error(f"Fehler beim Erstellen von {remote_path}: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
 
     def delete(self, path):
@@ -430,28 +433,28 @@ class SFTPProvider(DAVProvider):
 
     def _delete(self, sftp, path):
         """Löscht Datei oder Verzeichnis (rekursiv) über eine bereits offene Verbindung"""
-        _logger.debug(f"delete({path})")
+        self._logger.debug(f"delete({path})")
         remote_path = self._to_remote_path(path)
 
         try:
             attr = sftp.stat(remote_path)
 
             if stat.S_ISDIR(attr.st_mode):
-                _logger.debug(f"Lösche Verzeichnis rekursiv: {remote_path}")
+                self._logger.debug(f"Lösche Verzeichnis rekursiv: {remote_path}")
                 self._sftp_delete_recursive(sftp, remote_path)
             else:
-                _logger.debug(f"Lösche Datei: {remote_path}")
+                self._logger.debug(f"Lösche Datei: {remote_path}")
                 sftp.remove(remote_path)
         except FileNotFoundError:
-            _logger.warning(f"Zu löschendes Element nicht gefunden: {remote_path}")
+            self._logger.warning(f"Zu löschendes Element nicht gefunden: {remote_path}")
             raise DAVError(HTTP_NOT_FOUND, f"Path not found: {path}")
         except IOError as e:
-            _logger.error(f"Fehler beim Löschen von {remote_path}: {e}")
+            self._logger.error(f"Fehler beim Löschen von {remote_path}: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
 
     def move(self, src_path, dest_path, overwrite):
         """Verschiebt/Benennt Datei oder Verzeichnis um"""
-        _logger.debug(f"move({src_path} -> {dest_path}, overwrite={overwrite})")
+        self._logger.debug(f"move({src_path} -> {dest_path}, overwrite={overwrite})")
         remote_src = self._to_remote_path(src_path)
         remote_dest = self._to_remote_path(dest_path)
 
@@ -462,7 +465,7 @@ class SFTPProvider(DAVProvider):
                 if not overwrite:
                     raise DAVError(412, "Destination exists and overwrite=False")
                 # Lösche Ziel
-                _logger.debug(f"Ziel existiert, lösche: {remote_dest}")
+                self._logger.debug(f"Ziel existiert, lösche: {remote_dest}")
                 self._delete(sftp, dest_path)
             except FileNotFoundError:
                 pass  # Ziel existiert nicht - OK
@@ -472,12 +475,12 @@ class SFTPProvider(DAVProvider):
             except FileNotFoundError:
                 raise DAVError(HTTP_NOT_FOUND, f"Source not found: {src_path}")
             except IOError as e:
-                _logger.error(f"Move fehlgeschlagen: {e}")
+                self._logger.error(f"Move fehlgeschlagen: {e}")
                 raise DAVError(HTTP_FORBIDDEN, str(e))
 
     def copy(self, src_path, dest_path, overwrite, depth):
         """Kopiert Datei oder Verzeichnis"""
-        _logger.debug(f"copy({src_path} -> {dest_path}, overwrite={overwrite}, depth={depth})")
+        self._logger.debug(f"copy({src_path} -> {dest_path}, overwrite={overwrite}, depth={depth})")
 
         if depth not in ("0", "infinity"):
             raise DAVError(501, "Only depth '0' and 'infinity' supported")
@@ -501,15 +504,15 @@ class SFTPProvider(DAVProvider):
                 if stat.S_ISDIR(src_attr.st_mode):
                     if depth != "infinity":
                         raise DAVError(400, "COPY on collection requires depth='infinity'")
-                    _logger.debug(f"Kopiere Verzeichnis rekursiv: {remote_src}")
+                    self._logger.debug(f"Kopiere Verzeichnis rekursiv: {remote_src}")
                     self._sftp_copy_recursive(sftp, remote_src, remote_dest)
                 else:
-                    _logger.debug(f"Kopiere Datei: {remote_src}")
+                    self._logger.debug(f"Kopiere Datei: {remote_src}")
                     self._sftp_copy_file(sftp, remote_src, remote_dest)
             except FileNotFoundError:
                 raise DAVError(HTTP_NOT_FOUND, f"Source not found: {src_path}")
             except Exception as e:
-                _logger.error(f"Copy fehlgeschlagen: {e}")
+                self._logger.error(f"Copy fehlgeschlagen: {e}")
                 raise DAVError(HTTP_FORBIDDEN, str(e))
 
     def get_content_stream(self, path, mode="rb"):
@@ -518,7 +521,7 @@ class SFTPProvider(DAVProvider):
         die komplette Datei vorher in den Speicher zu laden).
         Die Pool-Verbindung wird bis close() gehalten und danach zurückgegeben.
         """
-        _logger.debug(f"get_content_stream({path})")
+        self._logger.debug(f"get_content_stream({path})")
 
         if mode != "rb":
             raise DAVError(501, "Only 'rb' mode supported")
@@ -533,7 +536,7 @@ class SFTPProvider(DAVProvider):
             raise DAVError(HTTP_NOT_FOUND, f"File not found: {path}")
         except IOError as e:
             self.pool.release(sftp)
-            _logger.error(f"Fehler beim Lesen von {remote_path}: {e}")
+            self._logger.error(f"Fehler beim Lesen von {remote_path}: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
 
         return _SFTPReadFile(self.pool, sftp, remote_file, name=path)
@@ -543,7 +546,7 @@ class SFTPProvider(DAVProvider):
         Öffnet einen SFTP-Filehandle zum direkten Schreiben.
         Die Pool-Verbindung wird bis close() gehalten und danach zurückgegeben.
         """
-        _logger.debug(f"begin_write({path})")
+        self._logger.debug(f"begin_write({path})")
         remote_path = self._to_remote_path(path)
 
         sftp = self.pool.acquire()
@@ -551,7 +554,7 @@ class SFTPProvider(DAVProvider):
             remote_file = sftp.open(remote_path, "wb")
         except IOError as e:
             self.pool.release(sftp)
-            _logger.error(f"Fehler beim Öffnen von {remote_path} zum Schreiben: {e}")
+            self._logger.error(f"Fehler beim Öffnen von {remote_path} zum Schreiben: {e}")
             raise DAVError(HTTP_FORBIDDEN, str(e))
 
         return _SFTPWriteFile(self.pool, sftp, remote_file)
@@ -576,7 +579,7 @@ class SFTPProvider(DAVProvider):
 
             sftp.rmdir(remote_dir_path)
         except Exception as e:
-            _logger.error(f"Rekursives Löschen fehlgeschlagen für {remote_dir_path}: {e}")
+            self._logger.error(f"Rekursives Löschen fehlgeschlagen für {remote_dir_path}: {e}")
             raise
 
     def _sftp_copy_file(self, sftp, remote_src, remote_dest):
@@ -592,7 +595,7 @@ class SFTPProvider(DAVProvider):
             attr = sftp.stat(remote_src)
             sftp.chmod(remote_dest, attr.st_mode)
         except Exception as e:
-            _logger.error(f"Datei-Copy fehlgeschlagen: {remote_src} -> {remote_dest}: {e}")
+            self._logger.error(f"Datei-Copy fehlgeschlagen: {remote_src} -> {remote_dest}: {e}")
             raise
 
     def _sftp_copy_recursive(self, sftp, remote_src_dir, remote_dest_dir):
@@ -605,7 +608,7 @@ class SFTPProvider(DAVProvider):
             attr_src = sftp.stat(remote_src_dir)
             sftp.chmod(remote_dest_dir, attr_src.st_mode)
         except IOError as e:
-            _logger.warning(f"Verzeichnis {remote_dest_dir} existiert bereits: {e}")
+            self._logger.warning(f"Verzeichnis {remote_dest_dir} existiert bereits: {e}")
 
         # Kopiere Inhalte
         for attr in sftp.listdir_attr(remote_src_dir):

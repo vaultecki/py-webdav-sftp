@@ -22,10 +22,10 @@ def make_provider(fake_sftp):
     """Baut einen SFTPProvider, dessen Connection-Pool ausschließlich die
     übergebene FakeSFTP-Instanz ausgibt - kein echtes SSH nötig."""
 
-    def _make(pool_size=2, remote_path=REMOTE_ROOT):
+    def _make(pool_size=2, remote_path=REMOTE_ROOT, logger=None):
         with patch.object(wds.SFTPConnectionPool, "_create_connection", return_value=fake_sftp):
             config = wds.SFTPConfig(host="dummy", remote_path=remote_path, pool_size=pool_size)
-            return wds.SFTPProvider(config)
+            return wds.SFTPProvider(config, logger=logger)
 
     return _make
 
