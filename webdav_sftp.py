@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from queue import Queue, Empty
 from typing import Optional
 from wsgidav.dav_provider import DAVProvider, DAVNonCollection, DAVCollection
-from wsgidav.wsgidav_app import WsgiDAVApp
 from wsgidav import util
 from wsgidav.dav_error import DAVError, HTTP_FORBIDDEN, HTTP_NOT_FOUND
 from os.path import expanduser
@@ -620,79 +619,3 @@ class SFTPProvider(DAVProvider):
                 self._sftp_copy_recursive(sftp, src_item, dest_item)
             else:
                 self._sftp_copy_file(sftp, src_item, dest_item)
-
-
-# ============================================================================
-# HAUPTPROGRAMM
-# ============================================================================
-
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    try:
-        # Lade Konfiguration
-        config = SFTPConfig.from_ssh_config(
-            host="samson",
-            ssh_config_path="~/.ssh/config",
-            remote_path="/tmp",
-            pool_size=3
-        )
-
-        # Erstelle Provider
-        provider = SFTPProvider(config)
-
-    except Exception as e:
-        _logger.critical(f"Fehler beim Initialisieren: {e}")
-        _logger.critical("Bitte SSH-Konfiguration überprüfen!")
-        exit(1)
-
-    # Ab hier ist der Pool offen - garantiert schließen, egal wie die
-    # Server-Ausführung endet (Ctrl+C, Bind-Fehler, unerwartete Exception).
-    with provider:
-        # Konfiguriere WsgiDAV
-        webdav_config = {
-            "provider_mapping": {
-                "/": provider,
-            },
-            "http_authenticator": {
-                "domain_controller": None  # Keine WebDAV-Auth
-            },
-            "simple_dc": {
-                "user_mapping": {
-                    "*": True  # ⚠️ ACHTUNG: Jeder hat Zugriff!
-                }
-            },
-            "verbose": 3,
-            "logging": {
-                "enable": True,
-                "enable_loggers": [],
-            }
-        }
-
-        app = WsgiDAVApp(webdav_config)
-
-        _logger.info("=" * 60)
-        _logger.info("WebDAV-SFTP Server gestartet")
-        _logger.info("URL: http://localhost:8080/")
-        _logger.info(f"Backend: {config.user}@{config.host}:{config.remote_path}")
-        _logger.info(f"Connection Pool: {config.pool_size} Verbindungen")
-        _logger.info("=" * 60)
-
-        from cheroot import wsgi
-
-        server = wsgi.Server(
-            bind_addr=("localhost", 8080),
-            wsgi_app=app,
-            numthreads=10  # Unterstützt bis zu 10 parallele Requests
-        )
-
-        try:
-            server.start()
-        except KeyboardInterrupt:
-            _logger.info("Server wird gestoppt...")
-        finally:
-            server.stop()
-            _logger.info("Auf Wiedersehen!")

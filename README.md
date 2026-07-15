@@ -8,6 +8,8 @@ A Python-based WebDAV server that bridges remote SFTP filesystems, allowing you 
 - **SFTP Backend**: Connect to any SSH/SFTP server using standard SSH configuration
 - **Connection Pooling**: Thread-safe connection management for optimal performance
 - **GUI Application**: User-friendly interface built with Tkinter
+- **Command-Line Interface**: Full CLI for scripting, headless servers, or scheduled/autostart deployments
+- **Windows Drive Mounting**: Optionally auto-mount the WebDAV share as a drive letter (e.g. `X:`) on start
 - **Configuration Persistence**: Save and restore your settings
 - **Autostart Support**: Launch the server automatically on application start
 - **Real-time Logging**: Monitor server activity and troubleshoot issues
@@ -63,13 +65,27 @@ python main.py
 
 ### Command-Line Mode
 
-For scripting or server deployments, use the standalone provider:
+For scripting, headless servers, or scheduled/autostart deployments (no GUI needed), use `cli.py`:
 
 ```bash
-python webdav_sftp.py
+python cli.py --host myserver
 ```
 
-Edit the `__main__` section in `webdav_sftp.py` to configure your SFTP connection.
+`--host` is the only required argument (a host name from your SSH config). All other options have sensible defaults:
+
+```bash
+python cli.py \
+  --host myserver \
+  --ssh-config ~/.ssh/config \
+  --remote-path /home/user/files \
+  --port 8080 \
+  --pool-size 3 \
+  --connection-timeout 10 \
+  --drive-letter X \
+  --log-level INFO
+```
+
+Run `python cli.py --help` for the full list of options. Stop the server with `Ctrl+C` (or `SIGTERM`, e.g. from a service manager) - the connection pool and, if used, the mounted drive letter are cleaned up automatically.
 
 ## Configuration
 
@@ -117,7 +133,13 @@ The GUI provides intuitive controls for all operations:
 
 Once the server is running, connect using any WebDAV client:
 
-**Windows File Explorer**:
+**Windows File Explorer (automatic)**:
+
+If a drive letter is configured (GUI: "Laufwerk (Windows)" dropdown, CLI: `--drive-letter X`), the server mounts itself as that drive right after starting, and unmounts it again when stopped - no manual steps needed. This runs `net use X: \\localhost@8080\DavWWWRoot /persistent:no` under the hood via the Windows WebDAV redirector (`WebClient` service). If it fails (drive letter already in use, `WebClient` service unavailable), the server keeps running regardless - check the log for details and mount manually as a fallback.
+
+> **Known Windows limitation**: The `WebClient` redirector has a default transfer size limit of **50 MB per file** (`FileSizeLimitInBytes` under `HKLM\SYSTEM\CurrentControlSet\Services\WebClient\Parameters`). Larger files will fail to copy through the mounted drive until this registry value is raised (and the `WebClient` service restarted). This is a Windows-side limitation, unrelated to this tool's connection pool or port.
+
+**Windows File Explorer (manual)**:
 1. Open File Explorer → Computer → Map Network Drive
 2. Enter: `\\localhost@8080\DavWWWRoot`
 
@@ -197,6 +219,18 @@ Built with Tkinter for cross-platform compatibility:
 - Verify network stability
 - Check firewall rules
 
+### Windows Auto-Mount Issues
+
+**Drive letter doesn't mount / `net use` fails**:
+- Check the log for the exact `net use` error message
+- Make sure the drive letter isn't already in use (`net use` with no arguments lists current mappings)
+- Ensure the `WebClient` service is available (it's part of Windows client editions; not installed by default on some Windows Server editions)
+- Try the manual mapping command from the log/README to see the raw error
+
+**Files over 50 MB fail to copy through the mounted drive**:
+- This is the `WebClient` redirector's default transfer limit, not a limit of this tool
+- Raise `FileSizeLimitInBytes` (DWORD, bytes) under `HKLM\SYSTEM\CurrentControlSet\Services\WebClient\Parameters` and restart the `WebClient` service
+
 ## Configuration Files
 
 - **Config Location**: 
@@ -213,9 +247,12 @@ Example configuration:
     "remote_path": "/home/user/files",
     "pool_size": 3,
     "webdav_port": 8080,
+    "drive_letter": "X",
     "autostart": false
 }
 ```
+
+`drive_letter` is optional and Windows-only; leave it empty (`""`) to disable auto-mounting.
 
 ## Security Considerations
 
@@ -232,21 +269,24 @@ For production use:
 
 ## Dependencies
 
-- **paramiko**: SSH protocol implementation
+- **paramiko**: SSH protocol implementation (also used to parse `~/.ssh/config`)
 - **WsgiDAV**: WebDAV server framework
 - **cheroot**: WSGI HTTP server
-- **sshconf**: SSH configuration parser
 - **tkinter**: GUI (usually included with Python)
 
-See `requirements.txt` for exact versions.
+See `requirements.txt` for exact versions, or `requirements-dev.txt` to additionally install `pytest` for running the test suite.
 
 ## Advanced Usage
 
 ### Custom SFTP Configuration
 
-Edit `webdav_sftp.py` to use different configurations:
+For CLI/scripted usage, all connection settings are exposed as `cli.py` arguments (see [Command-Line Mode](#command-line-mode)) - no source editing required.
+
+To embed the server in your own Python code instead, construct `SFTPConfig` directly:
 
 ```python
+from webdav_sftp import SFTPConfig, SFTPProvider
+
 config = SFTPConfig(
     host="example.com",
     user="username",
@@ -256,37 +296,22 @@ config = SFTPConfig(
     pool_size=5,
     connection_timeout=15
 )
+provider = SFTPProvider(config)
 ```
 
 ### Logging
 
-Adjust logging level in `main.py`:
+- **GUI**: Adjust the level in `main.py`'s `logging.basicConfig(level=logging.INFO, ...)` call.
+- **CLI**: Use `--log-level DEBUG` (or `WARNING`/`ERROR`) - no source editing needed.
 
-```python
-logging.basicConfig(
-    level=logging.DEBUG,  # Change to DEBUG for verbose output
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-```
+## Development
 
-### Running as Service (Linux)
+Install dev dependencies and run the test suite:
 
-Create a systemd service file for automatic startup:
-
-```ini
-[Unit]
-Description=ThaDAVSFTP WebDAV SFTP Bridge
-After=network.target
-
-[Service]
-Type=simple
-User=youruser
-WorkingDirectory=/path/to/ThaDAVSFTP
-ExecStart=/usr/bin/python3 /path/to/ThaDAVSFTP/main.py
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
+```bash
+pip install -r requirements-dev.txt
+pytest
+ruff check .
 ```
 
 ## License
