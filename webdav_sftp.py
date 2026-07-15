@@ -295,6 +295,7 @@ class SFTPProvider(DAVProvider):
         super().__init__()
         self.config = config
         self.pool = SFTPConnectionPool(config)
+        self._remote_root = posixpath.normpath(config.remote_path)
         _logger.info(f"SFTPProvider initialisiert: {config.user}@{config.host}:{config.port}")
 
     def __enter__(self):
@@ -304,8 +305,18 @@ class SFTPProvider(DAVProvider):
         self.pool.close()
 
     def _to_remote_path(self, dav_path):
-        """Konvertiert DAV-Pfad zu Remote-SFTP-Pfad"""
-        return posixpath.join(self.config.remote_path, dav_path.lstrip('/'))
+        """
+        Konvertiert DAV-Pfad zu Remote-SFTP-Pfad.
+        Lehnt Pfade ab, die '..' aus dem Remote-Root herausführen würden.
+        """
+        remote_path = posixpath.normpath(posixpath.join(self.config.remote_path, dav_path.lstrip('/')))
+
+        root_prefix = self._remote_root.rstrip('/') + '/'
+        if remote_path != self._remote_root and not remote_path.startswith(root_prefix):
+            _logger.warning(f"Pfad-Traversal-Versuch abgewiesen: {dav_path!r} -> {remote_path!r}")
+            raise DAVError(HTTP_FORBIDDEN, "Access outside root is not allowed")
+
+        return remote_path
 
     def _sftp_attr_to_dav_resource(self, dav_path, attr, name, environ):
         """Konvertiert SFTP-Attribute zu DAV-Ressource"""
@@ -384,19 +395,23 @@ class SFTPProvider(DAVProvider):
 
     def delete(self, path):
         """Löscht Datei oder Verzeichnis (rekursiv)"""
+        with self.pool.get_connection() as sftp:
+            self._delete(sftp, path)
+
+    def _delete(self, sftp, path):
+        """Löscht Datei oder Verzeichnis (rekursiv) über eine bereits offene Verbindung"""
         _logger.debug(f"delete({path})")
         remote_path = self._to_remote_path(path)
 
         try:
-            with self.pool.get_connection() as sftp:
-                attr = sftp.stat(remote_path)
+            attr = sftp.stat(remote_path)
 
-                if stat.S_ISDIR(attr.st_mode):
-                    _logger.debug(f"Lösche Verzeichnis rekursiv: {remote_path}")
-                    self._sftp_delete_recursive(sftp, remote_path)
-                else:
-                    _logger.debug(f"Lösche Datei: {remote_path}")
-                    sftp.remove(remote_path)
+            if stat.S_ISDIR(attr.st_mode):
+                _logger.debug(f"Lösche Verzeichnis rekursiv: {remote_path}")
+                self._sftp_delete_recursive(sftp, remote_path)
+            else:
+                _logger.debug(f"Lösche Datei: {remote_path}")
+                sftp.remove(remote_path)
         except FileNotFoundError:
             _logger.warning(f"Zu löschendes Element nicht gefunden: {remote_path}")
             raise DAVError(HTTP_NOT_FOUND, f"Path not found: {path}")
@@ -418,7 +433,7 @@ class SFTPProvider(DAVProvider):
                     raise DAVError(412, "Destination exists and overwrite=False")
                 # Lösche Ziel
                 _logger.debug(f"Ziel existiert, lösche: {remote_dest}")
-                self.delete(dest_path)
+                self._delete(sftp, dest_path)
             except FileNotFoundError:
                 pass  # Ziel existiert nicht - OK
 
@@ -446,7 +461,7 @@ class SFTPProvider(DAVProvider):
                 sftp.stat(remote_dest)
                 if not overwrite:
                     raise DAVError(412, "Destination exists and overwrite=False")
-                self.delete(dest_path)
+                self._delete(sftp, dest_path)
             except FileNotFoundError:
                 pass
 
