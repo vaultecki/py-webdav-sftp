@@ -12,7 +12,25 @@ _logger = logging.getLogger(__name__)
 IS_WINDOWS = platform.system() == "Windows"
 
 
-def mount_drive(letter, port, timeout=15, logger=None):
+def _ensure_webclient_running(log):
+    """
+    Startet den 'WebClient'-Dienst (WebDAV-Redirector) explizit vor.
+    Er ist standardmäßig als 'Manual (Trigger Start)' konfiguriert und wird
+    sonst erst durch den net-use-Aufruf selbst gestartet - dieser Kaltstart
+    kann mehrere Sekunden dauern und lässt net use sonst ins Timeout laufen.
+    Fehler hier sind nicht fatal, net use liefert danach ohnehin eine
+    aussagekräftige eigene Fehlermeldung (z.B. wenn der Dienst fehlt).
+    """
+    try:
+        subprocess.run(
+            ["sc", "start", "WebClient"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        log.debug(f"WebClient-Dienst konnte nicht vorab gestartet werden: {e}")
+
+
+def mount_drive(letter, port, timeout=30, logger=None):
     """
     Bindet http://localhost:<port>/ als Laufwerk <letter>: ein.
     Gibt bei Erfolg True zurück, sonst False. Fehler werden geloggt statt
@@ -29,6 +47,8 @@ def mount_drive(letter, port, timeout=15, logger=None):
 
     letter = letter.rstrip(":").upper()
     unc_path = rf"\\localhost@{port}\DavWWWRoot"
+
+    _ensure_webclient_running(log)
 
     try:
         result = subprocess.run(

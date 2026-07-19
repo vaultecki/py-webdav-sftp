@@ -226,6 +226,7 @@ Built with Tkinter for cross-platform compatibility:
 - Make sure the drive letter isn't already in use (`net use` with no arguments lists current mappings)
 - Ensure the `WebClient` service is available (it's part of Windows client editions; not installed by default on some Windows Server editions)
 - Try the manual mapping command from the log/README to see the raw error
+- **Mount times out on the very first attempt after a fresh boot/login**: the `WebClient` service starts as "Manual (Trigger Start)" and its cold start can take longer than the mount timeout. The server starts it explicitly before mounting and waits up to 30s for `net use` to finish; if it still times out, try starting the server again (the service will then already be running and the second mount should be fast), or set `WebClient` to Automatic startup (`services.msc`) to avoid the cold start entirely.
 
 **Files over 50 MB fail to copy through the mounted drive**:
 - This is the `WebClient` redirector's default transfer limit, not a limit of this tool
