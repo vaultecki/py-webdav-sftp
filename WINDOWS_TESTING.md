@@ -9,22 +9,22 @@ Python 3.8+, Zugriff auf einen echten SSH/SFTP-Server zum Testen.
 
 ## 0. Setup
 
-- [ ] `pip install -r requirements.txt` läuft ohne Fehler durch
-- [ ] `~/.ssh/config` enthält einen Test-Host mit funktionierendem Key-Login
-- [ ] `ssh <host>` funktioniert manuell in der Kommandozeile (Key-Auth, keine Passwortabfrage)
+- [X] `pip install -r requirements.txt` läuft ohne Fehler durch
+- [X] `~/.ssh/config` enthält einen Test-Host mit funktionierendem Key-Login
+- [X] `ssh <host>` funktioniert manuell in der Kommandozeile (Key-Auth, keine Passwortabfrage)
 
 ## 1. GUI - Grundfunktion
 
-- [ ] `python main.py` startet, Fenster öffnet sich ohne Exceptions in der Konsole
-- [ ] SSH-Config-Pfad wird korrekt vorbefüllt, "Laden" zeigt Hosts aus der Config im Dropdown
-- [ ] Host auswählen, Remote-Path setzen (z.B. ein Testverzeichnis mit ein paar Dateien), "Starten" klicken
-- [ ] Status wechselt Gestoppt → Verbinde... → Läuft (grün)
-- [ ] Log-Fenster zeigt Verbindungsaufbau-Meldungen
+- [X] `python main.py` startet, Fenster öffnet sich ohne Exceptions in der Konsole
+- [X] SSH-Config-Pfad wird korrekt vorbefüllt, "Laden" zeigt Hosts aus der Config im Dropdown
+- [X] Host auswählen, Remote-Path setzen (z.B. ein Testverzeichnis mit ein paar Dateien), "Starten" klicken
+- [X] Status wechselt Gestoppt → Verbinde... → Läuft (grün)
+- [X] Log-Fenster zeigt Verbindungsaufbau-Meldungen
 
 ## 2. GUI - Auto-Mount (Laufwerksbuchstabe)
 
-- [ ] Dropdown "Laufwerk (Windows)" zeigt Buchstaben D-Z + "Deaktiviert" zur Auswahl
-- [ ] Buchstaben auswählen, der noch nicht belegt ist (z.B. `X`), Server starten
+- [X] Dropdown "Laufwerk (Windows)" zeigt Buchstaben D-Z + "Deaktiviert" zur Auswahl
+- [X] Buchstaben auswählen, der noch nicht belegt ist (z.B. `X`), Server starten
 - [ ] Log zeigt `Laufwerk X: erfolgreich auf \\localhost@<port>\DavWWWRoot gemountet`
 - [ ] Explorer öffnen → Laufwerk `X:` ist da und zeigt den Remote-Path-Inhalt
 - [ ] "Stoppen" klicken → Log zeigt `Laufwerk X: getrennt`
