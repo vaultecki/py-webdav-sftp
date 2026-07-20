@@ -9,7 +9,7 @@ Python 3.8+, Zugriff auf einen echten SSH/SFTP-Server zum Testen.
 
 ## 0. Setup
 
-- [X] `pip install -r requirements.txt` läuft ohne Fehler durch
+- [X] `pip install .` läuft ohne Fehler durch
 - [X] `~/.ssh/config` enthält einen Test-Host mit funktionierendem Key-Login
 - [X] `ssh <host>` funktioniert manuell in der Kommandozeile (Key-Auth, keine Passwortabfrage)
 
