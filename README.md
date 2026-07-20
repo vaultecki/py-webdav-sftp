@@ -316,6 +316,12 @@ ruff check .
 mypy .
 ```
 
+Git hooks (ruff + mypy on commit, pytest on push) einrichten:
+
+```bash
+pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+
 ## License
 
 [Apache 2.0]
