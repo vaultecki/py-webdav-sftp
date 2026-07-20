@@ -1,9 +1,8 @@
 import io
 
 import pytest
-from wsgidav.dav_error import DAVError
-
 from conftest import REMOTE_ROOT
+from wsgidav.dav_error import DAVError
 
 
 def test_get_content_streams_full_file(provider, fake_sftp, environ):
@@ -32,7 +31,9 @@ def test_get_content_supports_seek_for_range_requests(provider, fake_sftp, envir
         stream.close()
 
 
-def test_get_content_returns_streaming_wrapper_not_bytesio(provider, fake_sftp, environ):
+def test_get_content_returns_streaming_wrapper_not_bytesio(
+    provider, fake_sftp, environ
+):
     """Regressionstest: get_content_stream() lud frueher die komplette Datei
     per f.read() in einen BytesIO-Puffer, bevor irgendein Byte zurueckgegeben
     wurde. Jetzt wird direkt vom offenen SFTP-Handle gelesen."""

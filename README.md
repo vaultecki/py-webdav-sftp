@@ -31,7 +31,7 @@ cd PyDAVSFTP
 
 2. Install dependencies:
 ```bash
-pip install -r requirements.txt
+pip install .
 ```
 
 3. Verify your SSH configuration:
@@ -275,7 +275,7 @@ For production use:
 - **cheroot**: WSGI HTTP server
 - **tkinter**: GUI (usually included with Python)
 
-See `requirements.txt` for exact versions, or `requirements-dev.txt` to additionally install `pytest` for running the test suite.
+See `pyproject.toml` for exact versions, or install the `dev` extra to additionally get `pytest`, `ruff`, and `mypy` for development.
 
 ## Advanced Usage
 
@@ -310,9 +310,10 @@ provider = SFTPProvider(config)
 Install dev dependencies and run the test suite:
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
 pytest
 ruff check .
+mypy .
 ```
 
 ## License

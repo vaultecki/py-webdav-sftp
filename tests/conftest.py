@@ -6,8 +6,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import webdav_sftp as wds  # noqa: E402
 from fake_sftp import FakeSFTP  # noqa: E402
+
+import webdav_sftp as wds  # noqa: E402
 
 REMOTE_ROOT = "/remote/webdav"
 
@@ -23,8 +24,12 @@ def make_provider(fake_sftp):
     übergebene FakeSFTP-Instanz ausgibt - kein echtes SSH nötig."""
 
     def _make(pool_size=2, remote_path=REMOTE_ROOT, logger=None):
-        with patch.object(wds.SFTPConnectionPool, "_create_connection", return_value=fake_sftp):
-            config = wds.SFTPConfig(host="dummy", remote_path=remote_path, pool_size=pool_size)
+        with patch.object(
+            wds.SFTPConnectionPool, "_create_connection", return_value=fake_sftp
+        ):
+            config = wds.SFTPConfig(
+                host="dummy", remote_path=remote_path, pool_size=pool_size
+            )
             return wds.SFTPProvider(config, logger=logger)
 
     return _make

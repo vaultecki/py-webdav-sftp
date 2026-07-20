@@ -12,7 +12,9 @@ class ListHandler(logging.Handler):
         self.records.append(record)
 
 
-def test_provider_logs_go_to_injected_logger_not_module_logger(make_provider, fake_sftp, environ):
+def test_provider_logs_go_to_injected_logger_not_module_logger(
+    make_provider, fake_sftp, environ
+):
     """Kernannahme des Multi-Tab-Feature: jede Verbindung bekommt ihren
     eigenen Logger, damit ihre Meldungen nur im eigenen Tab landen -
     unabhaengig davon, auf welchem Thread der Code tatsaechlich laeuft
@@ -74,7 +76,10 @@ def test_connection_pool_logs_go_to_injected_logger(make_provider, fake_sftp):
     try:
         provider = make_provider(logger=custom_logger, pool_size=1)
         try:
-            assert any("Initialisiere SFTP Connection Pool" in r.getMessage() for r in handler.records)
+            assert any(
+                "Initialisiere SFTP Connection Pool" in r.getMessage()
+                for r in handler.records
+            )
         finally:
             provider.pool.close()
     finally:

@@ -1,7 +1,6 @@
 import pytest
-from wsgidav.dav_error import DAVError
-
 from conftest import REMOTE_ROOT
+from wsgidav.dav_error import DAVError
 
 
 @pytest.mark.parametrize("dav_path,expected", [

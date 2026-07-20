@@ -10,7 +10,8 @@ def test_put_overwrites_existing_file(provider, fake_sftp, environ):
     assert resource is not None
 
     # Simuliert exakt den Ablauf aus wsgidav/request_server.py:
-    # fileobj = res.begin_write(...); fileobj.write(...); fileobj.close(); res.end_write(...)
+    # fileobj = res.begin_write(...); fileobj.write(...); fileobj.close();
+    # res.end_write(...)
     stream = resource.begin_write(content_type="text/plain")
     stream.write(b"new content")
     stream.close()
@@ -37,22 +38,28 @@ def test_put_creates_new_file_via_create_empty_resource(provider, fake_sftp, env
 
 
 def test_write_releases_pool_connection(provider, fake_sftp, environ):
-    """begin_write() haelt die Pool-Connection bis close() - danach muss sie zurueck sein."""
+    """begin_write() haelt die Pool-Connection bis close() - danach muss sie
+    zurueck sein."""
     resource = provider.get_resource_inst("/", environ)
     empty = resource.create_empty_resource("x.txt")
-    assert provider.pool.pool.qsize() == 2  # unveraendert nach create_empty_resource (with-Block)
+    # unveraendert nach create_empty_resource (with-Block)
+    assert provider.pool.pool.qsize() == 2
 
     stream = empty.begin_write()
-    assert provider.pool.pool.qsize() == 1  # Connection ist waehrend des Schreibens ausgecheckt
+    # Connection ist waehrend des Schreibens ausgecheckt
+    assert provider.pool.pool.qsize() == 1
 
     stream.close()
     assert provider.pool.pool.qsize() == 2  # sofort nach close() zurueck im Pool
 
-    empty.end_write(with_errors=False)  # end_write() ruft close() erneut auf - muss idempotent sein
+    # end_write() ruft close() erneut auf - muss idempotent sein
+    empty.end_write(with_errors=False)
     assert provider.pool.pool.qsize() == 2
 
 
-def test_end_write_closes_stream_if_write_failed_before_close(provider, fake_sftp, environ):
+def test_end_write_closes_stream_if_write_failed_before_close(
+    provider, fake_sftp, environ
+):
     """Wenn der Body-Transfer fehlschlaegt, ruft wsgidav.request_server.py
     res.end_write(with_errors=True) auf, OHNE vorher fileobj.close() zu rufen.
     Die Connection darf dabei nicht im Pool verloren gehen."""

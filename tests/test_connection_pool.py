@@ -14,7 +14,9 @@ def test_acquire_release_roundtrip(provider, fake_sftp):
     provider.pool.release(sftp2)
 
 
-def test_move_with_overwrite_does_not_deadlock_with_pool_size_one(make_provider, fake_sftp):
+def test_move_with_overwrite_does_not_deadlock_with_pool_size_one(
+    make_provider, fake_sftp
+):
     """Regressionstest: move() rief früher self.delete() auf, während die
     eigene Pool-Connection noch gehalten wurde - bei pool_size=1 blockierte
     das 5s und scheiterte dann mit 'Server ueberlastet'."""
@@ -35,7 +37,9 @@ def test_move_with_overwrite_does_not_deadlock_with_pool_size_one(make_provider,
         t.join(timeout=2)  # deutlich unter dem 5s Pool-Timeout
         elapsed = time.monotonic() - start
 
-        assert result.get("done"), "move() ist nicht rechtzeitig fertig geworden - Deadlock?"
+        assert result.get(
+            "done"
+        ), "move() ist nicht rechtzeitig fertig geworden - Deadlock?"
         assert elapsed < 2
         assert fake_sftp.files[f"{REMOTE_ROOT}/dest.txt"] == b"hello"
         assert f"{REMOTE_ROOT}/src.txt" not in fake_sftp.files
@@ -43,7 +47,9 @@ def test_move_with_overwrite_does_not_deadlock_with_pool_size_one(make_provider,
         provider.pool.close()
 
 
-def test_copy_with_overwrite_does_not_deadlock_with_pool_size_one(make_provider, fake_sftp):
+def test_copy_with_overwrite_does_not_deadlock_with_pool_size_one(
+    make_provider, fake_sftp
+):
     fake_sftp.files[f"{REMOTE_ROOT}/src.txt"] = b"hello"
     fake_sftp.files[f"{REMOTE_ROOT}/dest.txt"] = b"old"
 
@@ -59,8 +65,11 @@ def test_copy_with_overwrite_does_not_deadlock_with_pool_size_one(make_provider,
         t.start()
         t.join(timeout=2)
 
-        assert result.get("done"), "copy() ist nicht rechtzeitig fertig geworden - Deadlock?"
+        assert result.get(
+            "done"
+        ), "copy() ist nicht rechtzeitig fertig geworden - Deadlock?"
         assert fake_sftp.files[f"{REMOTE_ROOT}/dest.txt"] == b"hello"
-        assert fake_sftp.files[f"{REMOTE_ROOT}/src.txt"] == b"hello"  # Quelle bleibt bei copy erhalten
+        # Quelle bleibt bei copy erhalten
+        assert fake_sftp.files[f"{REMOTE_ROOT}/src.txt"] == b"hello"
     finally:
         provider.pool.close()

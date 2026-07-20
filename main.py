@@ -1,16 +1,17 @@
 import itertools
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
 import logging
 import threading
-from os.path import expanduser
+import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
-from config_manager import ConfigManager
-from webdav_sftp import SFTPConfig, SFTPProvider
-from wsgidav.wsgidav_app import WsgiDAVApp
 from cheroot import wsgi
+from wsgidav.wsgidav_app import WsgiDAVApp
+
 import ssh_helper
 import windows_mount
+from config_manager import ConfigManager
+from webdav_sftp import SFTPConfig, SFTPProvider
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,7 +20,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DRIVE_LETTER_DISABLED = "Deaktiviert"
-DRIVE_LETTER_CHOICES = [DRIVE_LETTER_DISABLED] + [chr(c) for c in range(ord("D"), ord("Z") + 1)]
+DRIVE_LETTER_CHOICES = [DRIVE_LETTER_DISABLED] + [
+    chr(c) for c in range(ord("D"), ord("Z") + 1)
+]
 
 DEFAULT_CONNECTION = {
     "ssh_config_file": "~/.ssh/config",
@@ -63,7 +66,9 @@ class TextHandler(logging.Handler):
 class WebDAVServerThread(threading.Thread):
     """Thread für einen einzelnen WebDAV-Server"""
 
-    def __init__(self, config, webdav_port, drive_letter=None, error_callback=None, logger=None):
+    def __init__(
+        self, config, webdav_port, drive_letter=None, error_callback=None, logger=None
+    ):
         super().__init__(daemon=True)
         self.config = config
         self.webdav_port = webdav_port
@@ -117,7 +122,9 @@ class WebDAVServerThread(threading.Thread):
             self.logger.info(f"WebDAV Server gestartet auf Port {self.webdav_port}")
 
             if self.drive_letter:
-                self.mounted = windows_mount.mount_drive(self.drive_letter, self.webdav_port, logger=self.logger)
+                self.mounted = windows_mount.mount_drive(
+                    self.drive_letter, self.webdav_port, logger=self.logger
+                )
 
             self.server.serve()
 
@@ -181,43 +188,64 @@ class ConnectionTab:
         status_frame.pack(fill="x", padx=10, pady=5)
 
         self.status_label = ttk.Label(
-            status_frame, text="● Gestoppt", font=("Arial", 12, "bold"), foreground="red"
+            status_frame,
+            text="● Gestoppt",
+            font=("Arial", 12, "bold"),
+            foreground="red",
         )
         self.status_label.pack(side="left", padx=5)
 
-        self.start_button = ttk.Button(status_frame, text="Starten", command=self.toggle_server, width=15)
+        self.start_button = ttk.Button(
+            status_frame, text="Starten", command=self.toggle_server, width=15
+        )
         self.start_button.pack(side="right", padx=5)
 
         # === SSH Config Frame ===
         ssh_frame = ttk.LabelFrame(root, text="SSH Konfiguration", padding=10)
         ssh_frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(ssh_frame, text="SSH Config Datei:").grid(row=0, column=0, sticky="w", pady=2)
+        ttk.Label(ssh_frame, text="SSH Config Datei:").grid(
+            row=0, column=0, sticky="w", pady=2
+        )
         config_row = ttk.Frame(ssh_frame)
         config_row.grid(row=0, column=1, sticky="ew", pady=2)
 
         self.ssh_config_var = tk.StringVar(value="~/.ssh/config")
-        ttk.Entry(config_row, textvariable=self.ssh_config_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(config_row, text="...", width=3, command=self.browse_ssh_config).pack(side="right", padx=(5, 0))
+        ttk.Entry(config_row, textvariable=self.ssh_config_var).pack(
+            side="left", fill="x", expand=True
+        )
+        ttk.Button(
+            config_row, text="...", width=3, command=self.browse_ssh_config
+        ).pack(side="right", padx=(5, 0))
 
         ttk.Label(ssh_frame, text="Host:").grid(row=1, column=0, sticky="w", pady=2)
         host_row = ttk.Frame(ssh_frame)
         host_row.grid(row=1, column=1, sticky="ew", pady=2)
 
         self.host_var = tk.StringVar()
-        self.host_combo = ttk.Combobox(host_row, textvariable=self.host_var, state="readonly")
-        self.host_combo.pack(side="left", fill="x", expand=True)
-        ttk.Button(host_row, text="Laden", command=self.load_ssh_hosts).pack(side="right", padx=(5, 0))
-
-        ttk.Label(ssh_frame, text="Remote Path:").grid(row=2, column=0, sticky="w", pady=2)
-        self.remote_path_var = tk.StringVar(value="/tmp")
-        ttk.Entry(ssh_frame, textvariable=self.remote_path_var).grid(row=2, column=1, sticky="ew", pady=2)
-
-        ttk.Label(ssh_frame, text="Pool Size:").grid(row=3, column=0, sticky="w", pady=2)
-        self.pool_size_var = tk.IntVar(value=3)
-        ttk.Spinbox(ssh_frame, from_=1, to=10, textvariable=self.pool_size_var, width=10).grid(
-            row=3, column=1, sticky="w", pady=2
+        self.host_combo = ttk.Combobox(
+            host_row, textvariable=self.host_var, state="readonly"
         )
+        self.host_combo.pack(side="left", fill="x", expand=True)
+        ttk.Button(host_row, text="Laden", command=self.load_ssh_hosts).pack(
+            side="right", padx=(5, 0)
+        )
+
+        ttk.Label(ssh_frame, text="Remote Path:").grid(
+            row=2, column=0, sticky="w", pady=2
+        )
+        self.remote_path_var = tk.StringVar(value="/tmp")
+        ttk.Entry(ssh_frame, textvariable=self.remote_path_var).grid(
+            row=2, column=1, sticky="ew", pady=2
+        )
+
+        ttk.Label(ssh_frame, text="Pool Size:").grid(
+            row=3, column=0, sticky="w", pady=2
+        )
+        self.pool_size_var = tk.IntVar(value=3)
+        ttk.Spinbox(
+            ssh_frame, from_=1, to=10, textvariable=self.pool_size_var, width=10
+        ).grid(row=3, column=1, sticky="w", pady=2)
 
         ssh_frame.columnconfigure(1, weight=1)
 
@@ -227,11 +255,17 @@ class ConnectionTab:
 
         ttk.Label(webdav_frame, text="Port:").grid(row=0, column=0, sticky="w", pady=2)
         self.webdav_port_var = tk.IntVar(value=8080)
-        ttk.Spinbox(webdav_frame, from_=1024, to=65535, textvariable=self.webdav_port_var, width=10).grid(
-            row=0, column=1, sticky="w", pady=2
-        )
+        ttk.Spinbox(
+            webdav_frame,
+            from_=1024,
+            to=65535,
+            textvariable=self.webdav_port_var,
+            width=10,
+        ).grid(row=0, column=1, sticky="w", pady=2)
 
-        ttk.Label(webdav_frame, text="Laufwerk (Windows):").grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Label(webdav_frame, text="Laufwerk (Windows):").grid(
+            row=1, column=0, sticky="w", pady=2
+        )
         self.drive_letter_var = tk.StringVar(value=DRIVE_LETTER_DISABLED)
         ttk.Combobox(
             webdav_frame,
@@ -272,7 +306,10 @@ class ConnectionTab:
         damit jeder Tab nur seine eigenen Meldungen sieht."""
         self.log_handler = TextHandler(self.log_text)
         self.log_handler.setFormatter(
-            logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S'))
+            logging.Formatter(
+                '%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S'
+            )
+        )
         self.logger.addHandler(self.log_handler)
 
     def remove_log_handler(self):
@@ -306,7 +343,9 @@ class ConnectionTab:
             "remote_path": self.remote_path_var.get(),
             "pool_size": self.pool_size_var.get(),
             "webdav_port": self.webdav_port_var.get(),
-            "drive_letter": "" if drive_letter == DRIVE_LETTER_DISABLED else drive_letter,
+            "drive_letter": (
+                "" if drive_letter == DRIVE_LETTER_DISABLED else drive_letter
+            ),
             "autostart": self.autostart_var.get(),
         }
 
@@ -326,7 +365,7 @@ class ConnectionTab:
         """Öffnet Dateidialog für SSH Config"""
         filename = filedialog.askopenfilename(
             title="SSH Config Datei auswählen",
-            initialdir=expanduser("~/.ssh"),
+            initialdir=str(Path("~/.ssh").expanduser()),
             filetypes=[("Config files", "config"), ("All files", "*.*")]
         )
         if filename:
@@ -336,7 +375,7 @@ class ConnectionTab:
     def load_ssh_hosts(self):
         """Lädt verfügbare Hosts aus SSH Config"""
         try:
-            ssh_config_path = expanduser(self.ssh_config_var.get())
+            ssh_config_path = str(Path(self.ssh_config_var.get()).expanduser())
             hosts = ssh_helper.get_hosts(ssh_config_path)
 
             self.host_combo['values'] = hosts
@@ -347,7 +386,9 @@ class ConnectionTab:
 
         except Exception as e:
             self.log(f"✗ Fehler beim Laden der Hosts: {e}", "ERROR")
-            messagebox.showerror("Fehler", f"SSH Config konnte nicht geladen werden:\n{e}")
+            messagebox.showerror(
+                "Fehler", f"SSH Config konnte nicht geladen werden:\n{e}"
+            )
 
     # ------------------------------------------------------------------------
     # Server-Steuerung
@@ -368,7 +409,7 @@ class ConnectionTab:
 
             sftp_config = SFTPConfig.from_ssh_config(
                 host=self.host_var.get(),
-                ssh_config_path=expanduser(self.ssh_config_var.get()),
+                ssh_config_path=str(Path(self.ssh_config_var.get()).expanduser()),
                 remote_path=self.remote_path_var.get(),
                 pool_size=self.pool_size_var.get(),
                 logger=self.logger,
@@ -383,7 +424,9 @@ class ConnectionTab:
             self.server_thread = WebDAVServerThread(
                 sftp_config,
                 self.webdav_port_var.get(),
-                drive_letter=None if drive_letter == DRIVE_LETTER_DISABLED else drive_letter,
+                drive_letter=(
+                    None if drive_letter == DRIVE_LETTER_DISABLED else drive_letter
+                ),
                 error_callback=self.on_server_error,
                 logger=self.logger,
             )
@@ -397,7 +440,9 @@ class ConnectionTab:
             self.is_running = False
             self.status_label.config(text="● Gestoppt", foreground="red")
             self.start_button.config(text="Starten", state="normal")
-            messagebox.showerror("Fehler", f"Server konnte nicht gestartet werden:\n{e}")
+            messagebox.showerror(
+                "Fehler", f"Server konnte nicht gestartet werden:\n{e}"
+            )
 
     def check_server_started(self):
         """Prüft ob Server erfolgreich gestartet wurde"""
@@ -412,7 +457,10 @@ class ConnectionTab:
             self.log(f"✓ Server gestartet: {webdav_url}")
 
             sftp_config = self.server_thread.config
-            self.log(f"  Backend: {sftp_config.user}@{sftp_config.host}:{sftp_config.remote_path}")
+            self.log(
+                f"  Backend: {sftp_config.user}@{sftp_config.host}:"
+                f"{sftp_config.remote_path}"
+            )
 
         elif self.server_thread.is_alive():
             self.frame.after(100, self.check_server_started)
@@ -429,7 +477,9 @@ class ConnectionTab:
             self.start_button.config(text="Starten", state="normal")
             self.log(f"✗ Server-Fehler: {error_msg}", "ERROR")
             messagebox.showerror(
-                "Server-Fehler", f"Server ({self.tab_title()}) konnte nicht gestartet werden:\n\n{error_msg}"
+                "Server-Fehler",
+                f"Server ({self.tab_title()}) konnte nicht gestartet werden:"
+                f"\n\n{error_msg}",
             )
 
         self.frame.after(0, show_error)
@@ -473,9 +523,15 @@ class ThaDAVScpApp:
         toolbar = ttk.Frame(self.root, padding=(10, 5))
         toolbar.pack(fill="x")
 
-        ttk.Button(toolbar, text="+ Neue Verbindung", command=lambda: self.add_tab()).pack(side="left", padx=(0, 5))
-        ttk.Button(toolbar, text="Verbindung entfernen", command=self.remove_current_tab).pack(side="left")
-        ttk.Button(toolbar, text="Alle Konfigurationen speichern", command=self.save_all).pack(side="right")
+        ttk.Button(
+            toolbar, text="+ Neue Verbindung", command=lambda: self.add_tab()
+        ).pack(side="left", padx=(0, 5))
+        ttk.Button(
+            toolbar, text="Verbindung entfernen", command=self.remove_current_tab
+        ).pack(side="left")
+        ttk.Button(
+            toolbar, text="Alle Konfigurationen speichern", command=self.save_all
+        ).pack(side="right")
 
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -492,7 +548,9 @@ class ThaDAVScpApp:
             legacy_host = self.config.get("host")
             if legacy_host:
                 connections = [{
-                    "ssh_config_file": self.config.get("ssh_config_file", "~/.ssh/config"),
+                    "ssh_config_file": self.config.get(
+                        "ssh_config_file", "~/.ssh/config"
+                    ),
                     "host": legacy_host,
                     "remote_path": self.config.get("remote_path", "/tmp"),
                     "pool_size": self.config.get("pool_size", 3),
@@ -525,7 +583,8 @@ class ThaDAVScpApp:
         if current.is_running:
             if not messagebox.askokcancel(
                 "Verbindung entfernen",
-                f"'{current.tab_title()}' läuft noch. Server stoppen und Verbindung entfernen?"
+                f"'{current.tab_title()}' läuft noch. Server stoppen und "
+                "Verbindung entfernen?"
             ):
                 return
             current.stop_server()
@@ -571,7 +630,9 @@ class ThaDAVScpApp:
         running = [tab for tab in self.tabs if tab.is_running]
         if running:
             names = ", ".join(tab.tab_title() for tab in running)
-            if not messagebox.askokcancel("Beenden", f"Server laufen noch ({names}). Wirklich beenden?"):
+            if not messagebox.askokcancel(
+                "Beenden", f"Server laufen noch ({names}). Wirklich beenden?"
+            ):
                 return
             for tab in running:
                 tab.stop_server()

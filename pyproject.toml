@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pydavsftp"
+version = "0.1.0"
+description = "WebDAV server that bridges remote SFTP filesystems"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.8"
+dependencies = [
+    "paramiko~=4.0.0",
+    "WsgiDAV~=4.3.3",
+    "cheroot~=11.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest~=9.1",
+    "ruff",
+    "mypy",
+]
+
+[tool.setuptools]
+py-modules = [
+    "cli",
+    "config_manager",
+    "main",
+    "ssh_helper",
+    "webdav_sftp",
+    "windows_mount",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "PTH"]
+
+[tool.mypy]
+exclude = ["venv"]
+ignore_missing_imports = true

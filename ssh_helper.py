@@ -1,10 +1,11 @@
+from pathlib import Path
+
 import paramiko
-from os.path import expanduser
 
 
 def _load_config(ssh_conf_file="~/.ssh/config"):
     config = paramiko.SSHConfig()
-    with open(expanduser(ssh_conf_file)) as f:
+    with Path(ssh_conf_file).expanduser().open() as f:
         config.parse(f)
     return config
 

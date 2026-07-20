@@ -1,4 +1,5 @@
-"""In-memory Fake für paramiko.SFTPClient - genug Oberfläche für die Tests von webdav_sftp.py"""
+"""In-memory Fake für paramiko.SFTPClient - genug Oberfläche für die Tests von
+webdav_sftp.py"""
 import io
 import stat as stat_module
 from dataclasses import dataclass
@@ -39,7 +40,8 @@ class _FakeSFTPFile(io.BytesIO):
 
 
 class FakeSFTP:
-    """Simuliert genug von paramiko.SFTPClient, um SFTPProvider ohne echtes SSH zu testen."""
+    """Simuliert genug von paramiko.SFTPClient, um SFTPProvider ohne echtes SSH
+    zu testen."""
 
     def __init__(self, dirs=None, files=None):
         self.dirs = set(dirs or set())
@@ -68,7 +70,7 @@ class FakeSFTP:
 
     def mkdir(self, path):
         if path in self.dirs or path in self.files:
-            raise IOError(f"{path} existiert bereits")
+            raise OSError(f"{path} existiert bereits")
         self.dirs.add(path)
 
     def rmdir(self, path):
