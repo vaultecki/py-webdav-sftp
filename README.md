@@ -135,7 +135,7 @@ Once the server is running, connect using any WebDAV client:
 
 **Windows File Explorer (automatic)**:
 
-If a drive letter is configured (GUI: "Laufwerk (Windows)" dropdown, CLI: `--drive-letter X`), the server mounts itself as that drive right after starting, and unmounts it again when stopped - no manual steps needed. This runs `net use X: \\localhost@8080\DavWWWRoot /persistent:no` under the hood via the Windows WebDAV redirector (`WebClient` service). If it fails (drive letter already in use, `WebClient` service unavailable), the server keeps running regardless - check the log for details and mount manually as a fallback.
+If a drive letter is configured (GUI: "Laufwerk (Windows)" dropdown, CLI: `--drive-letter X`), the server mounts itself as that drive right after starting, and unmounts it again when stopped - no manual steps needed. This runs `net use X: http://localhost:8080/ /persistent:no` under the hood via the Windows WebDAV redirector (`WebClient` service). If it fails (drive letter already in use, `WebClient` service unavailable), the server keeps running regardless - check the log for details and mount manually as a fallback.
 
 > **Known Windows limitation**: The `WebClient` redirector has a default transfer size limit of **50 MB per file** (`FileSizeLimitInBytes` under `HKLM\SYSTEM\CurrentControlSet\Services\WebClient\Parameters`). Larger files will fail to copy through the mounted drive until this registry value is raised (and the `WebClient` service restarted). This is a Windows-side limitation, unrelated to this tool's connection pool or port.
 

@@ -46,13 +46,13 @@ def mount_drive(letter, port, timeout=30, logger=None):
         return False
 
     letter = letter.rstrip(":").upper()
-    unc_path = rf"\\localhost@{port}\DavWWWRoot"
+    url = f"http://localhost:{port}/"
 
     _ensure_webclient_running(log)
 
     try:
         result = subprocess.run(
-            ["net", "use", f"{letter}:", unc_path, "/persistent:no"],
+            ["net", "use", f"{letter}:", url, "/persistent:no"],
             capture_output=True, text=True, timeout=timeout,
         )
     except (subprocess.TimeoutExpired, OSError) as e:
@@ -64,7 +64,7 @@ def mount_drive(letter, port, timeout=30, logger=None):
         log.warning(f"Laufwerk {letter}: konnte nicht gemountet werden ({detail})")
         return False
 
-    log.info(f"Laufwerk {letter}: erfolgreich auf {unc_path} gemountet")
+    log.info(f"Laufwerk {letter}: erfolgreich auf {url} gemountet")
     return True
 
 
