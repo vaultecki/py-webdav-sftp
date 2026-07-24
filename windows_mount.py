@@ -24,7 +24,7 @@ def _ensure_webclient_running(log):
     try:
         subprocess.run(
             ["sc", "start", "WebClient"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         log.debug(f"WebClient-Dienst konnte nicht vorab gestartet werden: {e}")
@@ -46,7 +46,7 @@ def mount_drive(letter, port, timeout=30, logger=None):
         return False
 
     letter = letter.rstrip(":").upper()
-    url = f"http://localhost:{port}/"
+    url = f"http://localhost:{port}"
 
     _ensure_webclient_running(log)
 
@@ -54,6 +54,7 @@ def mount_drive(letter, port, timeout=30, logger=None):
         result = subprocess.run(
             ["net", "use", f"{letter}:", url, "/persistent:no"],
             capture_output=True, text=True, timeout=timeout,
+            stdin=subprocess.DEVNULL,
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         log.warning(f"Laufwerk {letter}: konnte nicht gemountet werden: {e}")
@@ -81,6 +82,7 @@ def unmount_drive(letter, timeout=15, logger=None):
         result = subprocess.run(
             ["net", "use", f"{letter}:", "/delete", "/y"],
             capture_output=True, text=True, timeout=timeout,
+            stdin=subprocess.DEVNULL,
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         log.warning(f"Laufwerk {letter}: konnte nicht getrennt werden: {e}")
